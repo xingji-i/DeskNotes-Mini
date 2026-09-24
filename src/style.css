@@ -1,0 +1,16 @@
+/* 1. 一键引入 Tailwind v4 的全部基础样式 */
+@import "tailwindcss";
+
+/* 2. 强制注入我们开发文档中的全透明、无边框约束 */
+@theme {
+  /* 如果后续需要自定义线条颜色或特殊不透明度，可以在这里扩展 */
+}
+
+html, body, #app {
+  background-color: transparent !important;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* 严禁出现系统滚动条 */
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  user-select: none; /* 作为一个桌面挂件，严禁用户鼠标框选文字蓝底 */
+}
