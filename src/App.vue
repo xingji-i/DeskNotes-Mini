@@ -10,14 +10,6 @@ import { setDesktopUnderlay } from "tauri-plugin-desktop-underlay-api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 
-const todayFull = new Date()
-  .toLocaleDateString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-  .replace(/\//g, ".");
-
 const todayShort = new Date()
   .toLocaleDateString("zh-CN", {
     month: "2-digit",
@@ -32,14 +24,6 @@ type TodoItem = {
 };
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-
-// 导出卡片装饰图片（public/ai-photos 目录下的图片，每次导出随机选一张）
-const decorPhotos = [
-  "/ai-photos/362e4fa9-9b09-4f1d-93c1-9a2718cb244e.png",
-  "/ai-photos/c3339e0e-3faf-43c3-8554-30df32085148.png",
-  "/ai-photos/ea1fcb18-a697-4aac-bb7e-5addd8145bf2.png",
-  "/ai-photos/f40c1acd-957c-488a-b432-6764078b96fc.png",
-];
 
 const STORAGE_KEY = "desknote_tasks_v1";
 
@@ -200,82 +184,294 @@ watch(editingId, (newVal) => {
   }
 });
 
+// ===== 打卡卡片导出 =====
+
+// 设置字间距（Chromium 内核支持 ctx.letterSpacing）
+const setLetterSpacing = (ctx: CanvasRenderingContext2D, px: number) => {
+  (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${px}px`;
+};
+
+// 圆角矩形路径
+const roundRectPath = (
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number
+) => {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+};
+
+// 猫爪 "Done" 印章（完成项旁随机出现）
+const drawPawStamp = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-0.18);
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  // 肉垫
+  ctx.beginPath();
+  ctx.ellipse(0, 7, 8, 6.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 三只脚趾
+  [[-8, -5, 3.2], [0, -8, 3.5], [8, -5, 3.2]].forEach(([tx, ty, r]) => {
+    ctx.beginPath();
+    ctx.arc(tx, ty, r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+};
+
+// 趴在分割线上睡觉的小猫（纯矢量线条，前爪搭在线上）
+const drawSleepingCat = (ctx: CanvasRenderingContext2D, left: number, lineY: number) => {
+  const X = (dx: number) => left + dx;
+  const Y = (dy: number) => lineY + dy;
+  ctx.save();
+  ctx.strokeStyle = "#2F2F2F";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // 尾巴（左后方向上卷起）
+  ctx.beginPath();
+  ctx.moveTo(X(40), Y(-12));
+  ctx.bezierCurveTo(X(0), Y(-44), X(15), Y(-98), X(58), Y(-86));
+  ctx.stroke();
+
+  // 身体 → 头 → 耳朵 → 搭过线的前爪（一笔轮廓）
+  ctx.beginPath();
+  ctx.moveTo(X(40), Y(-12));
+  ctx.bezierCurveTo(X(30), Y(-64), X(75), Y(-97), X(130), Y(-94));
+  ctx.bezierCurveTo(X(165), Y(-92), X(185), Y(-84), X(200), Y(-62));
+  ctx.lineTo(X(208), Y(-110)); // 左耳
+  ctx.bezierCurveTo(X(220), Y(-94), X(230), Y(-90), X(238), Y(-88));
+  ctx.lineTo(X(246), Y(-114)); // 右耳
+  ctx.bezierCurveTo(X(260), Y(-98), X(270), Y(-92), X(276), Y(-86));
+  ctx.bezierCurveTo(X(282), Y(-72), X(284), Y(-57), X(282), Y(-46));
+  ctx.bezierCurveTo(X(278), Y(-30), X(265), Y(-22), X(250), Y(-20));
+  ctx.lineTo(X(246), Y(10)); // 前爪 1 越过线
+  ctx.bezierCurveTo(X(242), Y(16), X(234), Y(16), X(230), Y(10));
+  ctx.lineTo(X(226), Y(-10));
+  ctx.lineTo(X(216), Y(-10));
+  ctx.lineTo(X(212), Y(10)); // 前爪 2
+  ctx.bezierCurveTo(X(208), Y(16), X(200), Y(16), X(196), Y(10));
+  ctx.lineTo(X(192), Y(-8));
+  ctx.bezierCurveTo(X(170), Y(-4), X(90), Y(-4), X(40), Y(-12));
+  ctx.stroke();
+
+  // 闭眼
+  ctx.beginPath();
+  ctx.moveTo(X(234), Y(-56));
+  ctx.quadraticCurveTo(X(240), Y(-50), X(248), Y(-56));
+  ctx.stroke();
+
+  // 胡须
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(X(256), Y(-44));
+  ctx.lineTo(X(295), Y(-48));
+  ctx.moveTo(X(256), Y(-38));
+  ctx.lineTo(X(293), Y(-33));
+  ctx.stroke();
+
+  // zzZ
+  ctx.fillStyle = "#B9B9B9";
+  ctx.textAlign = "left";
+  ctx.font = "600 20px 'Segoe UI', sans-serif";
+  ctx.fillText("z", X(300), Y(-88));
+  ctx.font = "600 26px 'Segoe UI', sans-serif";
+  ctx.fillText("z", X(318), Y(-112));
+  ctx.font = "600 32px 'Segoe UI', sans-serif";
+  ctx.fillText("Z", X(340), Y(-140));
+  ctx.restore();
+};
+
+// 导出 3:4 社交打卡卡片
 const exportCard = async () => {
   if (!canvasRef.value) return;
   const canvas = canvasRef.value;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  // 1. 填充纯白背景
-  ctx.fillStyle = "#FFFFFF";
+  // ===== 布局常量（3:4 竖版卡片）=====
+  const W = 900;
+  const cardX = 48;
+  const cardY = 48;
+  const cardW = W - 96;
+  const radius = 40;
+  const padX = 72;
+  const lineHeight = 78;
+  const tasksStart = cardY + 290;
+  const list = tasks.value;
+
+  // 自适应：任务过多时自动增高卡片，避免与猫 / 页脚重叠
+  const lastBaseline = tasksStart + Math.max(list.length - 1, 0) * lineHeight;
+  const minDividerY = lastBaseline + lineHeight + 130;
+  let cardH = 1104; // 默认 3:4（画布 900×1200）
+  let dividerY = cardY + cardH - 96;
+  if (dividerY < minDividerY) {
+    dividerY = minDividerY;
+    cardH = dividerY - cardY + 96;
+  }
+
+  canvas.width = W;
+  canvas.height = cardY + cardH + 48;
+
+  // ===== 1. 柔和外背景 =====
+  ctx.fillStyle = "#F4F4F6";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 2. 绘制今日日期
-  ctx.fillStyle = "#000000";
-  ctx.font = "32px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(todayFull, canvas.width / 2, 100);
+  // ===== 2. 白色圆角卡片主体（悬浮弥散阴影）=====
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.07)";
+  ctx.shadowBlur = 36;
+  ctx.shadowOffsetY = 14;
+  roundRectPath(ctx, cardX, cardY, cardW, cardH, radius);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fill();
+  ctx.restore();
 
-  // 3. 遍历 TodoItem 数组，绘制任务文字和打勾状态
-  const startY = 180;
-  const lineHeight = 60;
-  ctx.font = "24px sans-serif";
+  // ===== 3. Header：大日期 + 星期 =====
   ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = "700 76px 'Segoe UI', 'PingFang SC', sans-serif";
+  ctx.fillStyle = "#1F1F1F";
+  ctx.fillText(todayShort, cardX + padX, cardY + 115);
 
-  tasks.value.forEach((task, index) => {
-    const y = startY + index * lineHeight;
-    
-    // 绘制复选框
-    const checkBoxX = 50;
-    ctx.strokeStyle = "#000000";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(checkBoxX, y - 20, 30, 30);
-    
+  setLetterSpacing(ctx, 5);
+  ctx.font = "500 24px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#B0B0B0";
+  const weekday = new Date()
+    .toLocaleDateString("en-US", { weekday: "long" })
+    .toUpperCase();
+  ctx.fillText(weekday, cardX + padX, cardY + 158);
+  setLetterSpacing(ctx, 0);
+
+  // ===== 4. Header：完成度进度环 =====
+  const total = list.length;
+  const doneCount = list.filter((t) => t.completed).length;
+  const pct = total ? Math.round((doneCount / total) * 100) : 0;
+  const ringR = 56;
+  const ringX = cardX + cardW - padX - ringR;
+  const ringY = cardY + 122;
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = "#EFEFEF";
+  ctx.beginPath();
+  ctx.arc(ringX, ringY, ringR, 0, Math.PI * 2);
+  ctx.stroke();
+  if (pct > 0) {
+    ctx.strokeStyle = "#2A2A2A";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(ringX, ringY, ringR, -Math.PI / 2, -Math.PI / 2 + (pct / 100) * Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.textAlign = "center";
+  setLetterSpacing(ctx, 1);
+  ctx.font = "600 10px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#B0B0B0";
+  ctx.fillText("COMPLETED", ringX, ringY - 12);
+  setLetterSpacing(ctx, 0);
+  ctx.font = "700 30px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#1F1F1F";
+  ctx.fillText(`${pct}%`, ringX, ringY + 26);
+
+  // ===== 5. Header 底部细分割线 =====
+  ctx.strokeStyle = "#EFEFEF";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cardX + padX, cardY + 215);
+  ctx.lineTo(cardX + cardW - padX, cardY + 215);
+  ctx.stroke();
+
+  // ===== 6. 任务列表（复选框 + 删除线 + 猫爪印章）=====
+  ctx.textAlign = "left";
+  const boxSize = 36;
+  const textX = cardX + padX + boxSize + 28;
+  const textMaxW = cardW - padX * 2 - boxSize - 28 - 90;
+  list.forEach((task, i) => {
+    const baseline = tasksStart + i * lineHeight;
+    const boxX = cardX + padX;
+    const boxY = baseline - 10 - boxSize / 2;
+
+    // 复选框
+    ctx.strokeStyle = task.completed ? "#C4C4C4" : "#2E2E2E";
+    ctx.lineWidth = 2.5;
+    roundRectPath(ctx, boxX, boxY, boxSize, boxSize, 10);
+    ctx.stroke();
     if (task.completed) {
-      // 绘制打勾
+      ctx.strokeStyle = "#2E2E2E";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(checkBoxX + 5, y - 5);
-      ctx.lineTo(checkBoxX + 12, y + 2);
-      ctx.lineTo(checkBoxX + 25, y - 15);
+      ctx.moveTo(boxX + 9, boxY + 19);
+      ctx.lineTo(boxX + 15, boxY + 25);
+      ctx.lineTo(boxX + 27, boxY + 11);
       ctx.stroke();
-      
-      // 绘制删除线文字
-      ctx.strokeStyle = "#666666";
-      ctx.fillStyle = "#666666";
-    } else {
-      ctx.strokeStyle = "#000000";
-      ctx.fillStyle = "#000000";
     }
-    
-    // 绘制文字
-    ctx.fillText(task.text, 100, y);
-    
+
+    // 文字
+    ctx.font = "500 30px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.fillStyle = task.completed ? "#ABABAB" : "#262626";
+    ctx.fillText(task.text, textX, baseline, textMaxW);
     if (task.completed) {
-      // 添加删除线
-      const textWidth = ctx.measureText(task.text).width;
+      // 删除线
+      const textW = Math.min(ctx.measureText(task.text).width, textMaxW);
+      ctx.strokeStyle = "#C0C0C0";
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(100, y - 5);
-      ctx.lineTo(100 + textWidth, y - 5);
+      ctx.moveTo(textX, baseline - 9);
+      ctx.lineTo(textX + textW, baseline - 9);
       ctx.stroke();
+      // 猫爪 Done 印章（随机出现）
+      if (Math.random() < 0.45) {
+        drawPawStamp(ctx, cardX + cardW - padX - 16, baseline - 14);
+      }
     }
   });
 
-  // 4. 绘制随机装饰图片（从 ai-photos 中随机选一张）
-  const randomPhoto = decorPhotos[Math.floor(Math.random() * decorPhotos.length)];
-  const decorImg = new Image();
-  decorImg.src = randomPhoto;
+  // ===== 7. 底部分割线 + 趴线小猫 =====
+  ctx.strokeStyle = "#EDEDED";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cardX + padX, dividerY);
+  ctx.lineTo(cardX + cardW - padX, dividerY);
+  ctx.stroke();
+  drawSleepingCat(ctx, cardX + cardW / 2 - 50, dividerY);
 
-  await new Promise((resolve) => {
-    decorImg.onload = resolve;
-  });
+  // ===== 8. Footer：品牌 Logo + 标语 =====
+  const footerY = dividerY + 50;
+  const penX = cardX + padX;
+  const penY = footerY - 18;
+  ctx.strokeStyle = "#262626";
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(penX + 1, penY + 16);
+  ctx.lineTo(penX + 14, penY + 3);
+  ctx.moveTo(penX + 9, penY + 1);
+  ctx.lineTo(penX + 16, penY + 8);
+  ctx.moveTo(penX + 1, penY + 16);
+  ctx.lineTo(penX + 5, penY + 12);
+  ctx.stroke();
 
-  const decorWidth = 200;
-  const decorHeight = 200;
-  const decorX = (canvas.width - decorWidth) / 2;
-  const decorY = canvas.height - decorHeight - 100;
-  ctx.drawImage(decorImg, decorX, decorY, decorWidth, decorHeight);
+  ctx.textAlign = "left";
+  setLetterSpacing(ctx, 3);
+  ctx.font = "700 19px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#262626";
+  ctx.fillText("DESKNOTE MINI", penX + 26, footerY);
+  setLetterSpacing(ctx, 0);
 
-  // 5. 调用 Tauri 文件保存 API
+  ctx.textAlign = "right";
+  setLetterSpacing(ctx, 2);
+  ctx.font = "500 15px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#B8B8B8";
+  ctx.fillText("#DailyFocus", cardX + cardW - padX, footerY);
+  setLetterSpacing(ctx, 0);
+
+  // ===== 9. 调用 Tauri 文件保存 API =====
   try {
     const dataUrl = canvas.toDataURL("image/png");
     const base64Data = dataUrl.split(",")[1];
@@ -286,7 +482,7 @@ const exportCard = async () => {
     }
 
     const filePath = await save({
-      defaultPath: `DeskNote_${todayFull.replace(/\./g, "")}.png`,
+      defaultPath: `DeskNote_${todayShort.replace(/\./g, "")}.png`,
       filters: [{
         name: "PNG Image",
         extensions: ["png"]
@@ -463,8 +659,8 @@ onMounted(() => {
     
     <canvas
       ref="canvasRef"
-      width="750"
-      height="1334"
+      width="900"
+      height="1200"
       style="display: none;"
     ></canvas>
   </div>

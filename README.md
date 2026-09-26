@@ -18,7 +18,7 @@
 - **Explorer 崩溃自愈**：监听系统的 `TaskbarCreated` 广播消息，Explorer 重启后自动恢复窗口层级，小组件不会"消失"
 - **待办管理**：添加 / 编辑（双击或点 ✎）/ 勾选完成 / 删除，待办在前、已完成在后自动排序
 - **本地持久化**：任务数据通过 `localStorage` 自动保存，重启不丢失
-- **卡片导出**：一键将今日待办渲染成 750×1334 的 PNG 图片（含日期、勾选状态、删除线和随机 AI 装饰插画），方便分享
+- **卡片导出**：一键将今日待办渲染成 3:4 比例的精美打卡卡片 PNG —— 双层卡片构图（浅灰外框 + 白色圆角主体 + 悬浮弥散阴影）、大字日期与星期、完成度进度环、极简线描小猫趴在分割线上、完成的任务随机盖上猫爪 Done 印章，品牌页脚 `DESKNOTE MINI` + `#DailyFocus`，适合直接分享到小红书 / 朋友圈
 - **优雅降级**：非 Tauri 环境（如纯浏览器 `vite dev` 首页）下自动跳过窗口初始化，界面照常可用
 
 ## 🖼️ 界面预览
@@ -180,9 +180,16 @@ DeskNotes-Mini/
 - **窗口外观（边框、透明、任务栏）**：`src-tauri/tauri.conf.json` → `app.windows[0]`
 - **Rust 侧定位逻辑**：`src-tauri/src/lib.rs` → `set_window_to_bottom()`
 
-### 添加导出卡片装饰图
+### 自定义导出卡片
 
-将 PNG 图片放入 `public/ai-photos/`，并把路径加入 `src/App.vue` 中的 `decorPhotos` 数组即可（导出时随机选用）。
+导出卡片完全由 Canvas 代码绘制（无图片资源依赖），绘制逻辑集中在 `src/App.vue` 的 `exportCard()`：
+
+- `roundRectPath()` — 圆角矩形（卡片主体 / 复选框）
+- `drawSleepingCat()` — 趴在分割线上的矢量线描小猫
+- `drawPawStamp()` — 完成项旁随机出现的猫爪 Done 印章
+- 布局常量（画布尺寸 900px 宽、3:4 默认高度、内边距、行高）均在 `exportCard()` 顶部，可按需调整
+
+修改后运行 `npm run tauri dev`，点击 📥 按钮即可预览导出效果。
 
 ## 🗺️ 路线图
 
