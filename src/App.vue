@@ -48,6 +48,23 @@ const cancelEdit = () => {
   editingId.value = null;
   editingText.value = "";
 };
+const handleEditRowFocusOut = async (event: FocusEvent, id: number) => {
+  if (editingId.value !== id) return;
+  const row = event.currentTarget as HTMLElement;
+  const nextTarget = event.relatedTarget;
+  if (nextTarget instanceof Node && row.contains(nextTarget)) return;
+  // Switching the edit button to Save briefly removes the focused button.
+  // Allow startEdit to focus its input before deciding that focus left the row.
+  await nextTick();
+  if (editingId.value === id && !row.contains(document.activeElement)) cancelEdit();
+};
+const handleEditRowKey = (event: KeyboardEvent, id: number) => {
+  if (editingId.value !== id || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelEdit();
+  }
+};
 const deleteTask = (id: number) => {
   tasks.value = tasks.value.filter((task) => task.id !== id);
   if (editingId.value === id) cancelEdit();
@@ -141,6 +158,8 @@ onMounted(() => {
         :key="task.id"
         class="flex items-center gap-3 text-sm transition-colors shrink-0"
         @click.stop
+        @focusout="handleEditRowFocusOut($event, task.id)"
+        @keydown="handleEditRowKey($event, task.id)"
       >
         <button
           class="w-5 h-5 border border-black/60 flex items-center justify-center text-[10px] flex-shrink-0 cursor-pointer"
@@ -160,7 +179,6 @@ onMounted(() => {
               v-model="editingText"
               aria-label="编辑任务"
               @keydown="handleInputKey($event, () => saveEdit(task.id), cancelEdit)"
-              @blur="cancelEdit()"
             />
           </template>
           <template v-else>

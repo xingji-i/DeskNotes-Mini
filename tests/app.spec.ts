@@ -7,6 +7,7 @@ type ThemeMetadata = {
   description: string;
   location?: string;
   category: "nature" | "china" | "world";
+  isNew: boolean;
 };
 
 async function themeCatalog(page: Page): Promise<ThemeMetadata[]> {
@@ -185,15 +186,15 @@ test("快速切换时较早请求的 PNG 不会覆盖最终插画", async ({ pag
   expect(pngDigest(await previewPng(dialog))).toBe(moonDigest);
 });
 
-test("26款原创线稿完整有效，PNG各不相同且重复导出保持一致", async ({ page }) => {
+test("38款原创线稿完整有效，PNG各不相同且重复导出保持一致", async ({ page }) => {
   await page.goto("/");
   const catalog = await themeCatalog(page);
-  expect(catalog).toHaveLength(26);
-  expect(new Set(catalog.map(({ id }) => id)).size).toBe(26);
-  expect(new Set(catalog.map(({ name }) => name)).size).toBe(26);
-  expect(catalog.filter(({ category }) => category === "nature")).toHaveLength(6);
-  expect(catalog.filter(({ category }) => category === "china")).toHaveLength(10);
-  expect(catalog.filter(({ category }) => category === "world")).toHaveLength(10);
+  expect(catalog).toHaveLength(38);
+  expect(new Set(catalog.map(({ id }) => id)).size).toBe(38);
+  expect(new Set(catalog.map(({ name }) => name)).size).toBe(38);
+  expect(catalog.filter(({ category }) => category === "nature")).toHaveLength(12);
+  expect(catalog.filter(({ category }) => category === "china")).toHaveLength(13);
+  expect(catalog.filter(({ category }) => category === "world")).toHaveLength(13);
   const digests = await page.evaluate(async (themeValues) => {
     const modulePath = "/src/lib/exportCard.ts";
     const sketchModulePath = "/src/lib/sketches.ts";
@@ -234,7 +235,7 @@ test("26款原创线稿完整有效，PNG各不相同且重复导出保持一致
     expect(svgValid, `${theme} should be a self-contained valid SVG`).toBe(true);
     expect(second, theme).toBe(first);
   }
-  expect(new Set(digests.map(({ first }) => first)).size).toBe(26);
+  expect(new Set(digests.map(({ first }) => first)).size).toBe(38);
 });
 
 test("建筑分类、名称地点描述搜索及空态在紧凑窗口内可用", async ({ page }) => {
@@ -248,9 +249,9 @@ test("建筑分类、名称地点描述搜索及空态在紧凑窗口内可用",
   const search = dialog.getByRole("searchbox", { name: "搜索插画", exact: true });
   await previewPng(dialog);
   await expect(categories.getByRole("button", { name: "分类：全部", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(choices.getByRole("button")).toHaveCount(26);
+  await expect(choices.getByRole("button")).toHaveCount(38);
   expect(await choices.evaluate((list) => list.scrollHeight > list.clientHeight)).toBe(true);
-  for (const [name, count] of [["日常风景", 6], ["中国建筑", 10], ["世界建筑", 10], ["全部", 26]] as const) {
+  for (const [name, count] of [["日常风景", 12], ["中国建筑", 13], ["世界建筑", 13], ["全部", 38]] as const) {
     const category = categories.getByRole("button", { name: `分类：${name}`, exact: true });
     await category.click();
     await expect(category).toHaveAttribute("aria-pressed", "true");
@@ -279,7 +280,7 @@ test("建筑分类、名称地点描述搜索及空态在紧凑窗口内可用",
   await dialog.getByRole("button", { name: "清除筛选", exact: true }).click();
   await expect(search).toHaveValue("");
   await expect(categories.getByRole("button", { name: "分类：全部", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(choices.getByRole("button")).toHaveCount(26);
+  await expect(choices.getByRole("button")).toHaveCount(38);
   await choices.getByRole("button").last().scrollIntoViewIfNeeded();
   await expect(choices.getByRole("button").last()).toBeInViewport({ ratio: 1 });
   await expect(search).toBeInViewport({ ratio: 1 });
@@ -440,6 +441,83 @@ for (const viewport of [{ width: 360, height: 450 }, { width: 319, height: 400 }
     await assertContained();
   });
 }
+
+test("本期新增筛选与分类搜索组合可用，窄窗口内缩略图正常显示", async ({ page }) => {
+  await page.setViewportSize({ width: 280, height: 320 });
+  await page.goto("/");
+  const catalog = await themeCatalog(page);
+  expect(catalog.filter((theme) => theme.isNew)).toHaveLength(12);
+  await page.getByTitle("导出卡片").click();
+  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
+  const fresh = dialog.getByRole("button", { name: "仅看新增插画", exact: true });
+  const choices = dialog.getByRole("group", { name: "插画主题", exact: true });
+  await expect(fresh).toBeInViewport({ ratio: 1 });
+  await fresh.click();
+  await expect(fresh).toHaveAttribute("aria-pressed", "true");
+  await expect(choices.getByRole("button")).toHaveCount(12);
+  await dialog.getByRole("button", { name: "分类：世界建筑", exact: true }).click();
+  await expect(choices.getByRole("button")).toHaveCount(3);
+  const theme = catalog.find((theme) => theme.isNew && theme.category === "world")!;
+  const choice = choices.getByRole("button", { name: `插画：${theme.name}`, exact: true });
+  await choice.scrollIntoViewIfNeeded();
+  await expect.poll(() => choice.locator("img").evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth === 660)).toBe(true);
+  await choice.click();
+  await previewPng(dialog);
+  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeInViewport({ ratio: 1 });
+  await dialog.getByRole("searchbox", { name: "搜索插画", exact: true }).fill("没有这座建筑xyz");
+  await expect(dialog.getByText("没有找到这幅风景", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "清除筛选", exact: true }).click();
+  await expect(fresh).toHaveAttribute("aria-pressed", "false");
+  await expect(choices.getByRole("button")).toHaveCount(38);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("中文搜索取消输入法候选词时不会误关导出页", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTitle("导出卡片").click();
+  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
+  const search = dialog.getByRole("searchbox", { name: "搜索插画", exact: true });
+  await search.fill("山");
+  await search.dispatchEvent("keydown", { key: "Escape", isComposing: true });
+  await expect(dialog).toBeVisible();
+  await expect(search).toHaveValue("山");
+  await search.dispatchEvent("keydown", { key: "Escape", keyCode: 229 });
+  await expect(dialog).toBeVisible();
+  await search.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+test("插画渲染失败会清除旧预览，重试后预览和下载恢复一致", async ({ page }) => {
+  await page.setViewportSize({ width: 280, height: 320 });
+  await page.goto("/");
+  await page.getByTitle("导出卡片").click();
+  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
+  await previewPng(dialog);
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (callback) {
+      HTMLCanvasElement.prototype.toBlob = original;
+      setTimeout(() => callback(null), 0);
+    };
+  });
+  await dialog.getByRole("button", { name: "插画：山野来信", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("图片编码失败");
+  await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeDisabled();
+  const retry = dialog.getByRole("button", { name: "重试预览", exact: true });
+  await expect(retry).toBeInViewport({ ratio: 1 });
+  await retry.click();
+  const restored = await previewPng(dialog);
+  await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true })).toHaveAttribute("data-theme", "mountains");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  const downloadPromise = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "保存 PNG", exact: true }).click();
+  const download = await downloadPromise;
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  expect(pngDigest(Buffer.concat(chunks))).toBe(pngDigest(restored));
+});
 
 test("打开损坏缓存不会覆盖原记录，编辑后保留备份", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("desknote_tasks_v1", "{broken"));

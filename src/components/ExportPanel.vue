@@ -5,7 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { renderCard } from "../lib/exportCard";
 import { formatFileDate } from "../lib/date";
-import { createSketchSvg, isSketchTheme, SKETCH_CATEGORIES, SKETCH_THEMES, THEME_STORAGE_KEY, type SketchCategory, type SketchTheme } from "../lib/sketches";
+import { getSketchThumbnailUrl, isSketchTheme, SKETCH_CATEGORIES, SKETCH_THEMES, THEME_STORAGE_KEY, type SketchCategory, type SketchTheme } from "../lib/sketches";
 import type { TodoItem } from "../lib/tasks";
 
 const props = defineProps<{ tasks: TodoItem[] }>();
@@ -16,6 +16,8 @@ const themeGridRef = ref<HTMLElement | null>(null);
 const zoomButtonRef = ref<HTMLButtonElement | null>(null);
 const activeCategory = ref<SketchCategory>("all");
 const searchText = ref("");
+const newOnly = ref(false);
+const newThemeCount = SKETCH_THEMES.filter((theme) => theme.isNew).length;
 const showFullPreview = ref(false);
 const date = new Date();
 const selectedTheme = ref<SketchTheme>("cat");
@@ -37,11 +39,12 @@ const filteredThemes = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase();
   return SKETCH_THEMES.filter((theme) =>
     (activeCategory.value === "all" || theme.category === activeCategory.value) &&
+    (!newOnly.value || theme.isNew) &&
     (!query || `${theme.name} ${theme.location} ${theme.description}`.toLocaleLowerCase().includes(query)),
   );
 });
-const clearFilters = () => { activeCategory.value = "all"; searchText.value = ""; };
-watch([activeCategory, searchText], async () => {
+const clearFilters = () => { activeCategory.value = "all"; searchText.value = ""; newOnly.value = false; };
+watch([activeCategory, searchText, newOnly], async () => {
   await nextTick();
   if (themeGridRef.value) themeGridRef.value.scrollTop = 0;
 });
@@ -54,19 +57,21 @@ const error = ref("");
 let renderVersion = 0;
 let disposed = false;
 
-watch(selectedTheme, async (theme) => {
+const renderPreview = async () => {
+  const theme = selectedTheme.value;
   const version = ++renderVersion;
   isRendering.value = true;
   previewBlob.value = null;
+  const oldUrl = previewUrl.value;
+  previewUrl.value = "";
+  if (oldUrl) URL.revokeObjectURL(oldUrl);
   status.value = "";
   error.value = "";
   try {
     const blob = await renderCard(props.tasks, date, { theme });
     if (disposed || version !== renderVersion) return;
-    const oldUrl = previewUrl.value;
     previewBlob.value = blob;
     previewUrl.value = URL.createObjectURL(blob);
-    if (oldUrl) URL.revokeObjectURL(oldUrl);
     try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* 仅忽略偏好写入失败。 */ }
   } catch (cause) {
     if (!disposed && version === renderVersion) {
@@ -75,7 +80,8 @@ watch(selectedTheme, async (theme) => {
   } finally {
     if (!disposed && version === renderVersion) isRendering.value = false;
   }
-}, { immediate: true });
+};
+watch(selectedTheme, renderPreview, { immediate: true });
 
 const download = async () => {
   if (!previewBlob.value || isRendering.value || isSaving.value) return;
@@ -123,6 +129,7 @@ const zoomPreview = async () => {
   backRef.value?.focus();
 };
 const handleKey = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "Escape") {
     event.preventDefault();
     close();
@@ -167,7 +174,7 @@ onUnmounted(() => {
     <div class="preview-stage" :aria-busy="isRendering">
       <button ref="zoomButtonRef" class="card-preview" aria-label="放大预览" :disabled="!previewBlob || isRendering" @click="zoomPreview">
         <img v-if="previewUrl" :src="previewUrl" alt="导出卡片预览" :data-theme="selectedTheme" />
-        <span v-else class="preview-loading">正在描绘…</span>
+        <span v-else class="preview-loading">{{ isRendering ? '正在描绘…' : '预览未生成' }}</span>
         <span class="zoom-hint">点击放大</span>
       </button>
       <div class="preview-caption">
@@ -186,14 +193,18 @@ onUnmounted(() => {
         </button>
       </div>
       <div class="search-row">
-        <input v-model="searchText" type="search" aria-label="搜索插画" placeholder="搜建筑、地区或名称" />
-        <span>{{ filteredThemes.length }} 款</span>
+        <div class="search-field">
+          <input v-model="searchText" type="search" aria-label="搜索插画" placeholder="搜名称、地区" />
+          <span>{{ filteredThemes.length }} 款</span>
+        </div>
+        <button v-if="newThemeCount" class="new-filter" aria-label="仅看新增插画" :aria-pressed="newOnly" @click="newOnly = !newOnly">新增 {{ newThemeCount }}</button>
       </div>
       <div ref="themeGridRef" class="theme-grid" role="group" aria-label="插画主题">
       <button v-for="theme in filteredThemes" :key="theme.id" class="theme-button"
         :class="{ selected: selectedTheme === theme.id }" :aria-label="`插画：${theme.name}`"
         :aria-pressed="selectedTheme === theme.id" :disabled="isSaving" @click="selectedTheme = theme.id">
-        <span class="theme-sketch" aria-hidden="true" v-html="createSketchSvg(theme.id, true)"></span>
+        <span class="theme-sketch" aria-hidden="true"><img :src="getSketchThumbnailUrl(theme.id)" alt="" loading="lazy" decoding="async" width="660" height="220" /></span>
+        <span v-if="theme.isNew" class="new-badge" aria-hidden="true">新</span>
         <span>{{ theme.name }}</span>
       </button>
       <div v-if="filteredThemes.length === 0" class="empty-themes">
@@ -204,7 +215,10 @@ onUnmounted(() => {
     </template>
 
     <footer class="export-footer">
-      <p v-if="error" class="export-error" role="alert">{{ error }}</p>
+      <div v-if="error" class="export-error-row">
+        <p class="export-error" role="alert">{{ error }}</p>
+        <button v-if="!previewBlob && !isRendering" class="retry-button" @click="renderPreview">重试预览</button>
+      </div>
       <p v-else class="export-status" role="status">{{ status || (isRendering ? '正在生成预览…' : '保存的卡片与预览一致') }}</p>
       <button class="save-button" :disabled="isRendering || isSaving || !previewBlob" :aria-busy="isSaving" @click="download">
         {{ isSaving ? "正在保存…" : "保存 PNG" }} <span aria-hidden="true">↓</span>
@@ -234,22 +248,28 @@ onUnmounted(() => {
 .category-tabs button { height: 26px; white-space: nowrap; border: 0; border-bottom: 2px solid transparent; padding: 0 3px; background: transparent; color: #958a78; font-size: 10px; cursor: pointer; }
 .category-tabs button[aria-pressed="true"] { border-bottom-color: #78664d; color: #514534; }
 .category-tabs span { color: #a79d8b; font-size: 8px; }
-.search-row { position: relative; display: flex; align-items: center; flex-shrink: 0; height: 26px; }
+.search-row { display: flex; align-items: center; flex-shrink: 0; height: 26px; gap: 6px; }
+.search-field { position: relative; flex: 1; min-width: 0; }
 .search-row input { box-sizing: border-box; width: 100%; height: 26px; min-width: 0; border: 1px solid #e8e1d6; border-radius: 6px; padding: 3px 45px 3px 9px; background: #faf8f3; color: #625746; font-size: 10px; }
 .search-row input::placeholder { color: #b0a592; }
-.search-row span { position: absolute; right: 8px; pointer-events: none; font-size: 9px; color: #a29580; }
+.search-field span { position: absolute; right: 8px; pointer-events: none; font-size: 9px; color: #a29580; }
 .theme-grid { display: grid; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 56px; align-content: start; gap: 6px; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: #d5cbbd transparent; }
-.theme-button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; height: 56px; padding: 3px 4px 4px; background: #fffefa; border: 1px solid #e8e3da; border-radius: 7px; font-size: 9px; color: #847969; cursor: pointer; transition: border-color .15s, background .15s; }
+.theme-button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; height: 56px; padding: 3px 4px 4px; background: #fffefa; border: 1px solid #e8e3da; border-radius: 7px; font-size: 9px; color: #847969; cursor: pointer; transition: border-color .15s, background .15s; }
 .theme-button:hover { border-color: #aaa08f; background: #f7f4ee; }
 .theme-button.selected { border-color: #796b57; background: #f1ece3; color: #4d4336; }
 .theme-sketch { display: block; width: 100%; height: 31px; }
-.theme-sketch :deep(svg) { display: block; width: 100%; height: 100%; }
+.theme-sketch img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .empty-themes { grid-column: 1 / -1; align-self: center; text-align: center; font-size: 11px; color: #a19582; }
 .empty-themes p { margin: 5px 0; }
 .empty-themes button { border: 0; background: transparent; color: #77654d; font-size: 10px; text-decoration: underline; cursor: pointer; }
 .full-preview-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-radius: 8px; background: #f0ede7; }
 .full-preview-scroll img { display: block; width: 100%; height: auto; }
 .export-footer { flex-shrink: 0; }
+.export-error-row { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+.export-error-row .export-error { flex: 1; min-width: 0; margin: 0; }
+.new-filter, .retry-button { flex-shrink: 0; height: 26px; padding: 0 7px; border: 1px solid #e8e1d6; border-radius: 6px; background: #faf8f3; color: #847969; font-size: 10px; cursor: pointer; }
+.new-filter[aria-pressed="true"] { border-color: #796b57; background: #f1ece3; color: #4d4336; }
+.new-badge { position: absolute; top: 2px; right: 3px; font-size: 8px; line-height: 11px; color: #8b7452; }
 .export-status, .export-error { margin: 0 0 4px; min-height: 12px; line-height: 12px; font-size: 9px; color: #9c917f; text-align: center; }
 .export-error { color: #a64736; max-height: 24px; overflow-y: auto; }
 .save-button { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 32px; border: 0; border-radius: 7px; color: #fffdf8; background: #514939; font-size: 11px; letter-spacing: 1px; cursor: pointer; }

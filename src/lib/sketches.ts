@@ -2,6 +2,8 @@ import { landscapeScenes } from "./sketchLandscapes";
 import { lifeScenes } from "./sketchLife";
 import { CHINA_THEMES } from "./sketchChina";
 import { WORLD_THEMES } from "./sketchWorld";
+import { NATURE_COLLECTION_THEMES } from "./sketchNatureCollection";
+import { ARCHITECTURE_COLLECTION_THEMES } from "./sketchArchitectureCollection";
 
 const NATURE_THEMES = [
   { id: "cat", name: "午后小憩", description: "把忙碌放一放，和小猫一起伸个懒腰。" },
@@ -12,10 +14,17 @@ const NATURE_THEMES = [
   { id: "moon", name: "月色入湖", description: "月亮落在水面，今天也可以安心收尾。" },
 ] as const;
 
-export const SKETCH_THEMES = [
+const ORIGINAL_THEMES = [
   ...NATURE_THEMES.map((theme) => ({ ...theme, category: "nature" as const, location: "日常与自然" })),
   ...CHINA_THEMES.map(({ scene: _scene, ...theme }) => theme),
   ...WORLD_THEMES.map(({ scene: _scene, ...theme }) => theme),
+] as const;
+
+const LATEST_COLLECTION = [...NATURE_COLLECTION_THEMES, ...ARCHITECTURE_COLLECTION_THEMES] as const;
+
+export const SKETCH_THEMES = [
+  ...ORIGINAL_THEMES.map((theme) => ({ ...theme, isNew: false })),
+  ...LATEST_COLLECTION.map(({ scene: _scene, ...theme }) => ({ ...theme, isNew: true })),
 ] as const;
 
 export const SKETCH_CATEGORIES = [
@@ -36,6 +45,7 @@ const scenes: Record<string, string> = {
   ...lifeScenes,
   ...Object.fromEntries(CHINA_THEMES.map((theme) => [theme.id, theme.scene])),
   ...Object.fromEntries(WORLD_THEMES.map((theme) => [theme.id, theme.scene])),
+  ...Object.fromEntries(LATEST_COLLECTION.map((theme) => [theme.id, theme.scene])),
 };
 
 /** 内联素材均为本地原创线稿，预览与导出使用同一份绘图。 */
@@ -45,6 +55,18 @@ export function createSketchSvg(theme: SketchTheme, thumbnail = false): string {
     <title>${selected.name}</title>
     ${scenes[selected.id]}
   </svg>`;
+}
+
+const thumbnailUrls = new Map<SketchTheme, string>();
+
+/** A single image node per scene keeps the growing thumbnail grid lightweight. */
+export function getSketchThumbnailUrl(theme: SketchTheme): string {
+  let url = thumbnailUrls.get(theme);
+  if (!url) {
+    url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(createSketchSvg(theme, true))}`;
+    thumbnailUrls.set(theme, url);
+  }
+  return url;
 }
 
 export async function loadSketchImage(theme: SketchTheme): Promise<HTMLImageElement> {
