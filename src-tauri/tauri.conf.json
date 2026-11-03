@@ -14,7 +14,7 @@
       {
         "label": "main",
         "title": "DeskNote Mini",
-        "width": 390,
+        "width": 360,
         "height": 450,
         "resizable": false,
         "fullscreen": false,

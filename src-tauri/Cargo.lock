@@ -700,7 +700,6 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
- "tauri-plugin-desktop-underlay",
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
@@ -3471,21 +3470,6 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
-]
-
-[[package]]
-name = "tauri-plugin-desktop-underlay"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a07521a61310951cb6433b3cfa5d290ed0a6916dbaaf815bd22928c323774a6a"
-dependencies = [
- "anyhow",
- "gdk",
- "gtk",
- "objc2",
- "tauri",
- "tauri-plugin",
- "windows",
 ]
 
 [[package]]

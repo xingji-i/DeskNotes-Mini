@@ -1,21 +1,21 @@
+#[cfg(target_os = "windows")]
 use tauri::Manager;
-use std::thread;
-use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, WPARAM},
+    Foundation::HWND,
     UI::WindowsAndMessaging::{
-        FindWindowW, SendMessageW, RegisterWindowMessageW, RegisterClassW,
+        RegisterWindowMessageW, RegisterClassW,
         CreateWindowExW, DefWindowProcW, GetMessageW, TranslateMessage,
         DispatchMessageW, MSG, WNDCLASSW, SetWindowPos, GetWindowLongPtrW,
-        SetWindowLongPtrW, GetSystemMetrics,
+        SetWindowLongPtrW,
         GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE,
-        SM_CXSCREEN, SWP_NOSIZE, SWP_SHOWWINDOW, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
         CS_HREDRAW, CS_VREDRAW,
     },
 };
 
+#[cfg(target_os = "windows")]
 fn to_wstr(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -37,22 +37,17 @@ unsafe fn set_window_to_bottom(hwnd: HWND) {
     ex_style |= WS_EX_NOACTIVATE as isize;
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style);
 
-    // 定位到右上角
-    let screen_width = GetSystemMetrics(SM_CXSCREEN);
-    let window_width = 390;
-    let x_position = screen_width - window_width - 40;
-    let y_position = 40;
-
     // 将窗口放到最底层（高于壁纸，低于其他窗口）
+    // 位置由前端统一设置；Explorer 重启时仅恢复层级，不重置位置。
     // HWND_BOTTOM 表示放在所有非顶层窗口的下方
     SetWindowPos(
         hwnd,
         1isize as *mut _, // HWND_BOTTOM = 1
-        x_position,
-        y_position,
         0,
         0,
-        SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     );
 }
 
@@ -66,9 +61,7 @@ fn start_taskbar_monitor(target_hwnd: HWND) {
     std::thread::spawn(move || unsafe {
         // 注册 TaskbarCreated 消息 ID
         let msg_id = RegisterWindowMessageW(to_wstr("TaskbarCreated").as_ptr());
-        unsafe {
-            TASKBAR_MSG_ID = msg_id;
-        }
+        TASKBAR_MSG_ID = msg_id;
 
         // 准备窗口类名
         let class_name = to_wstr("DeskNoteMonitorClass");
@@ -107,14 +100,6 @@ fn start_taskbar_monitor(target_hwnd: HWND) {
                 break;
             }
 
-            if msg.message == msg_id {
-                // explorer 重启后收到广播，重新设置窗口层级
-                let target = unsafe { DESKNOTE_TARGET };
-                if target != std::ptr::null_mut() {
-                    set_window_to_bottom(target);
-                }
-            }
-
             TranslateMessage(&msg as *const MSG);
             DispatchMessageW(&msg as *const MSG);
         }
@@ -140,7 +125,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_desktop_underlay::init())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {
@@ -150,7 +134,7 @@ pub fn run() {
                 unsafe {
                     // 设置窗口到桌面底层
                     set_window_to_bottom(hwnd);
-                    window.show().unwrap_or(());
+                    // 前端完成工作区 / DPI 定位后再显示，避免先露出屏幕外的窗口。
                 }
 
                 // 启动 TaskbarCreated 监听器
