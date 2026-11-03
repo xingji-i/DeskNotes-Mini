@@ -16,6 +16,8 @@ type MockState = WindowSnapshot & {
   monitors?: Monitor[];
   calls: IpcCall[];
   shown: WindowSnapshot[];
+  failPositionSave?: boolean;
+  failDragging?: boolean;
 };
 type HarnessWindow = Window & {
   isTauri: boolean;
@@ -38,7 +40,13 @@ async function startMockedDesktop(
   monitor = primary,
   outerPadding = { width: 0, height: 0 },
   currentMonitorUnavailable = false,
-  options: { savedPosition?: Point; monitors?: Monitor[]; monitorEnumerationFails?: boolean } = {},
+  options: {
+    savedPosition?: Point;
+    monitors?: Monitor[];
+    monitorEnumerationFails?: boolean;
+    nativeMount?: boolean;
+    failPositionSave?: boolean;
+  } = {},
 ) {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -46,9 +54,14 @@ async function startMockedDesktop(
     if (message.type() === "error") errors.push(message.text());
   });
   await page.route("**/favicon.ico", (route) => route.fulfill({ status: 204 }));
+  if (options.nativeMount) {
+    // Install native mocks before the real application captures isTauri().
+    // The query-qualified entry below then runs the unchanged production mount.
+    await page.route("**/src/main.ts", (route) => route.fulfill({ contentType: "text/javascript", body: "" }));
+  }
   await page.goto("/");
-  // The normal browser mount has already taken the non-Tauri path. Invoke the
-  // production initializer again with the official SDK's IPC and event mocks.
+  // Geometry tests call the initializer directly; nativeMount tests first install
+  // the official SDK's IPC/event mocks, then exercise the real application's UI.
   await page.evaluate(async ({ monitor, outerPadding, currentMonitorUnavailable, options }) => {
     const mocksPath = "/node_modules/@tauri-apps/api/mocks.js";
     const eventsPath = "/node_modules/@tauri-apps/api/event.js";
@@ -63,8 +76,16 @@ async function startMockedDesktop(
       position: { x: 1900, y: 1000 },
       calls: [],
       shown: [],
+      failPositionSave: options.failPositionSave,
     };
     if (options.savedPosition) localStorage.setItem("desknote_position_v1", JSON.stringify(options.savedPosition));
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "desknote_position_v1" && state.failPositionSave) {
+        throw new DOMException("Position storage is full", "QuotaExceededError");
+      }
+      return originalSetItem.call(this, key, value);
+    };
     const snapshot = (): WindowSnapshot => ({ size: { ...state.size }, position: { ...state.position } });
     mockWindows("main");
     mockIPC(async (command: string, args: unknown) => {
@@ -105,6 +126,7 @@ async function startMockedDesktop(
           await emit("tauri://move", state.position);
           return;
         case "plugin:window|start_dragging":
+          if (state.failDragging) throw new Error("The native drag could not start");
           return;
         case "plugin:window|show":
           state.shown.push(snapshot());
@@ -115,9 +137,15 @@ async function startMockedDesktop(
     }, { shouldMockEvents: true });
     testWindow.desktopHarness = { state, emit };
     testWindow.isTauri = true;
-    const { initDesktopWidget } = await import(initializerPath);
-    await initDesktopWidget();
+    if (options.nativeMount) {
+      const entryPath = "/src/main.ts?native-desktop-test";
+      await import(entryPath);
+    } else {
+      const { initDesktopWidget } = await import(initializerPath);
+      await initDesktopWidget();
+    }
   }, { monitor, outerPadding, currentMonitorUnavailable, options });
+  await expect.poll(async () => (await readState(page)).shown.length).toBeGreaterThan(0);
   return errors;
 }
 
@@ -284,5 +312,65 @@ test("枚举显示器暂时失败仍按当前工作区定位并显示", async ({
   const state = await readState(page);
   expect(state.position).toEqual({ x: 1440, y: 30 });
   expect(state.shown).toEqual([{ size: state.size, position: state.position }]);
+  expect(errors).toEqual([]);
+});
+
+test("原生 UI 顶部拖动调用窗口命令，钉住和重启后的状态会阻止移动，解锁仍可编辑", async ({ page }) => {
+  const errors = await startMockedDesktop(page, primary, undefined, false, { nativeMount: true });
+  const dragCount = async () => (await readState(page)).calls.filter(({ command }) => command === "plugin:window|start_dragging").length;
+  const handle = page.getByTestId("widget-drag-handle");
+  // A native note moves its OS window, never the browser's inner card.
+  await expect(page.locator(".widget-shell")).not.toHaveCSS("position", "fixed");
+  await handle.click({ position: { x: 8, y: 8 } });
+  await expect.poll(dragCount).toBe(1);
+  await page.getByRole("button", { name: "钉住位置", exact: true }).click();
+  await handle.click({ position: { x: 8, y: 8 } });
+  expect(await dragCount()).toBe(1);
+  expect(await page.evaluate(() => localStorage.getItem("desknote_pinned_v1"))).toBe("true");
+
+  // Recreate the page and native harness, keeping this context's persistent data.
+  errors.push(...await startMockedDesktop(page, primary, undefined, false, { nativeMount: true }));
+  await expect(page.getByRole("button", { name: "取消钉住", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await handle.click({ position: { x: 8, y: 8 } });
+  expect(await dragCount()).toBe(0);
+  await page.getByTitle("添加（建议只设置5件）").click();
+  await page.getByRole("textbox", { name: "新任务", exact: true }).fill("钉住后可以编辑的原生便签");
+  await page.getByRole("textbox", { name: "新任务", exact: true }).press("Enter");
+  await expect(page.getByRole("checkbox", { name: "钉住后可以编辑的原生便签", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "取消钉住", exact: true }).click();
+  await handle.click({ position: { x: 8, y: 8 } });
+  await expect.poll(dragCount).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test("原生位置保存失败会持续提示，钉住保存成功不能掩盖，位置写入恢复后清除", async ({ page }) => {
+  const errors = await startMockedDesktop(page, primary, undefined, false, { nativeMount: true, failPositionSave: true });
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("便签位置未能保存");
+  expect(await page.evaluate(() => localStorage.getItem("desknote_position_v1"))).toBeNull();
+  await page.getByRole("button", { name: "钉住位置", exact: true }).click();
+  await expect(alert).toContainText("便签位置未能保存");
+  expect(await page.evaluate(() => localStorage.getItem("desknote_pinned_v1"))).toBe("true");
+  await page.evaluate(async () => {
+    const { state, emit } = (window as unknown as HarnessWindow).desktopHarness;
+    state.failPositionSave = false;
+    state.position = { x: 230, y: 170 };
+    await emit("tauri://move", state.position);
+  });
+  await expect(alert).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("desknote_position_v1"))).toBe('{"x":230,"y":170}');
+  expect(errors).toEqual([]);
+});
+
+test("原生拖动命令失败可见且能够重试，恢复后清除错误", async ({ page }) => {
+  const errors = await startMockedDesktop(page, primary, undefined, false, { nativeMount: true });
+  await page.evaluate(() => { (window as unknown as HarnessWindow).desktopHarness.state.failDragging = true; });
+  const handle = page.getByTestId("widget-drag-handle");
+  await handle.click({ position: { x: 8, y: 8 } });
+  await expect(page.getByRole("alert")).toContainText("暂时无法移动便签");
+  await page.evaluate(() => { (window as unknown as HarnessWindow).desktopHarness.state.failDragging = false; });
+  await handle.click({ position: { x: 8, y: 8 } });
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect((await readState(page)).calls.filter(({ command }) => command === "plugin:window|start_dragging")).toHaveLength(2);
   expect(errors).toEqual([]);
 });

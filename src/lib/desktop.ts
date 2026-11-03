@@ -13,20 +13,12 @@ import { DESKTOP_POSITION_KEY, monitorForPosition, parseDesktopPosition, type De
 
 let disposeWidget: (() => void) | undefined;
 
-function rememberPosition(position: DesktopPosition) {
-  if (!Number.isSafeInteger(position.x) || !Number.isSafeInteger(position.y)) return;
-  try {
-    const value = JSON.stringify({ x: position.x, y: position.y });
-    if (localStorage.getItem(DESKTOP_POSITION_KEY) !== value) localStorage.setItem(DESKTOP_POSITION_KEY, value);
-  } catch { /* Moving remains available if the position cannot be saved. */ }
-}
-
 export async function startDesktopDrag(pinned: boolean): Promise<void> {
   if (pinned || !isTauri()) return;
   await getCurrentWindow().startDragging();
 }
 
-export async function initDesktopWidget(): Promise<void> {
+export async function initDesktopWidget(onPositionSaveResult?: (saved: boolean) => void): Promise<void> {
   if (!isTauri()) return;
   disposeWidget?.();
   const win = getCurrentWindow();
@@ -35,6 +27,18 @@ export async function initDesktopWidget(): Promise<void> {
   let correcting = false;
   let queued = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const rememberPosition = (position: DesktopPosition) => {
+    if (!Number.isSafeInteger(position.x) || !Number.isSafeInteger(position.y)) return;
+    try {
+      const value = JSON.stringify({ x: position.x, y: position.y });
+      if (localStorage.getItem(DESKTOP_POSITION_KEY) !== value) localStorage.setItem(DESKTOP_POSITION_KEY, value);
+      onPositionSaveResult?.(true);
+    } catch {
+      // Keep dragging usable while making the unsaved position visible to the user.
+      onPositionSaveResult?.(false);
+    }
+  };
 
   const fitToMonitor = async (initial = false) => {
     let savedPosition: DesktopPosition | undefined;

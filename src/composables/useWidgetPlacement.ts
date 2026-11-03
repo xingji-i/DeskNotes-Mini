@@ -21,7 +21,15 @@ function isPoint(value: unknown): value is Point {
 export function useWidgetPlacement(shell: Ref<HTMLElement | null>) {
   const native = isTauri();
   const pinned = ref(readPreference(PIN_KEY) === true);
-  const placementError = ref<string | null>(null);
+  const pinSaveFailed = ref(false);
+  const positionSaveFailed = ref(false);
+  const dragError = ref<string | null>(null);
+  // Saving one setting must not hide a failure to save another setting.
+  const placementError = computed(() => [
+    positionSaveFailed.value ? "便签位置未能保存，重启后可能恢复原位置。" : null,
+    pinSaveFailed.value ? "钉住状态未能保存，重启后可能恢复原状态。" : null,
+    dragError.value,
+  ].filter(Boolean).join(" ") || null);
   const storedPosition = native ? null : readPreference(BROWSER_POSITION_KEY);
   const position = ref<Point>(isPoint(storedPosition) ? storedPosition : { x: 0, y: 0 });
   const dragging = ref(false);
@@ -34,11 +42,12 @@ export function useWidgetPlacement(shell: Ref<HTMLElement | null>) {
   });
 
   const persist = (key: string, value: unknown) => {
+    const failed = key === PIN_KEY ? pinSaveFailed : positionSaveFailed;
     try {
       localStorage.setItem(key, JSON.stringify(value));
-      placementError.value = null;
+      failed.value = false;
     } catch {
-      placementError.value = "位置设置未能保存，重启后可能恢复默认。";
+      failed.value = true;
     }
   };
   const clampPosition = (point: Point): Point => {
@@ -80,10 +89,9 @@ export function useWidgetPlacement(shell: Ref<HTMLElement | null>) {
     if (pinned.value || event.button !== 0 || !event.isPrimary) return;
     event.preventDefault();
     if (native) {
-      const failureMessage = "暂时无法移动便签，请重试。";
       void startDesktopDrag(pinned.value)
-        .then(() => { if (placementError.value === failureMessage) placementError.value = null; })
-        .catch(() => { placementError.value = failureMessage; });
+        .then(() => { dragError.value = null; })
+        .catch(() => { dragError.value = "暂时无法移动便签，请重试。"; });
       return;
     }
     drag = {
@@ -108,7 +116,8 @@ export function useWidgetPlacement(shell: Ref<HTMLElement | null>) {
       fitBrowser();
       window.addEventListener("resize", fitBrowser);
     }
-    void initDesktopWidget().catch((error) => console.error("初始化挂件失败", error));
+    void initDesktopWidget((saved) => { positionSaveFailed.value = !saved; })
+      .catch((error) => console.error("初始化挂件失败", error));
   });
   onUnmounted(() => {
     stopDragging();

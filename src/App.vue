@@ -240,7 +240,7 @@ watch(showAdd, async (visible) => {
 </template>
 
 <style scoped>
-.widget-shell { width: fit-content; max-width: 100vw; }
+.widget-shell { width: min(360px, 100vw); height: min(450px, 100dvh); }
 .task-card { width: min(360px, 100vw); height: min(450px, 100dvh); padding: clamp(12px, 5.5vw, 20px); overflow: hidden; }
 .task-actions { margin-right: 2px; }
 .drag-handle { cursor: grab; touch-action: none; }
