@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref, onMounted, watch, nextTick } from "vue";
+import { defineAsyncComponent, ref, watch, nextTick } from "vue";
 
 import { useTasks } from "./composables/useTasks";
 import { useToday } from "./composables/useToday";
+import { useWidgetPlacement } from "./composables/useWidgetPlacement";
 import { createTaskId, toggleTaskStatus, type TodoItem } from "./lib/tasks";
-
-import { initDesktopWidget } from "./lib/desktop";
 
 const todayShort = useToday();
 const { tasks, storageError } = useTasks();
@@ -15,6 +14,8 @@ const editingText = ref("");
 const showAdd = ref(false);
 const addInputRef = ref<HTMLInputElement | null>(null);
 const cardRef = ref<HTMLElement | null>(null);
+const shellRef = ref<HTMLElement | null>(null);
+const { pinned, dragging, style: placementStyle, placementError, startDragging, togglePinned } = useWidgetPlacement(shellRef);
 const ExportPanel = defineAsyncComponent(() => import("./components/ExportPanel.vue"));
 const showExport = ref(false);
 const exportTasks = ref<TodoItem[]>([]);
@@ -106,12 +107,10 @@ watch(showAdd, async (visible) => {
   }
 });
 
-onMounted(() => {
-  initDesktopWidget().catch((error) => console.error("初始化挂件失败", error));
-});
 </script>
 
 <template>
+  <div ref="shellRef" class="widget-shell" :style="placementStyle">
   <ExportPanel v-if="showExport" :tasks="exportTasks" @close="closeExport" />
   <div
     v-else
@@ -121,13 +120,10 @@ onMounted(() => {
   >
     <div
       class="task-header border-b border-black/30 pb-3 text-sm tracking-[0.3em] font-mono flex items-center gap-2 shrink-0" @click.stop>
-        <div class="shrink-0">{{ todayShort }}</div>
-        <div 
-          class="flex-1 min-w-0 text-xs text-black/40 tracking-[2.6px] cursor-pointer hover:text-black/60 truncate"
-          v-show="!showAdd"
-          @click.stop="showAdd = true"
-        >
-          建议只设置最紧急的5项
+        <div class="drag-handle flex items-center gap-2 min-w-0" :class="[{ 'is-pinned': pinned, 'is-dragging': dragging }, showAdd ? 'shrink-0' : 'flex-1']"
+          data-testid="widget-drag-handle" :title="pinned ? '已钉住，点击图钉后可移动' : '拖动便签'" @pointerdown="startDragging">
+          <div class="shrink-0">{{ todayShort }}</div>
+          <div v-show="!showAdd" class="min-w-0 text-xs text-black/40 tracking-[2.6px] truncate">建议只设置最紧急的5项</div>
         </div>
       <div class="task-actions flex items-center gap-1" :class="showAdd ? 'flex-1 min-w-0' : 'shrink-0'">
         <template v-if="showAdd">
@@ -143,6 +139,12 @@ onMounted(() => {
           <button class="text-sm px-0 py-1 flex-shrink-0" aria-label="取消添加" @click="cancelAdd">×</button>
         </template>
         <template v-else>
+          <button class="pin-button" :class="{ pinned }" :aria-pressed="pinned"
+            :aria-label="pinned ? '取消钉住' : '钉住位置'" :title="pinned ? '取消钉住' : '钉住位置'" @click="togglePinned">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 3h6M10 3v7l-4 4v2h12v-2l-4-4V3M12 16v5" />
+            </svg>
+          </button>
           <button class="text-lg px-0.5 py-1 flex-shrink-0 hover:bg-black/10 rounded" style="font-size: 14px;" @click="showAdd = true" title="添加（建议只设置5件）">＋</button>
           <button class="px-0.5 py-1 flex-shrink-0 hover:bg-black/10 rounded flex items-center gap-1 disabled:opacity-40" style="font-size: 14px;" ref="exportButtonRef" @click="openExport" title="导出卡片">
             📥
@@ -151,7 +153,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <p v-if="storageError" role="alert" class="shrink-0 max-h-12 overflow-y-auto text-xs text-red-700 mt-2">{{ storageError }}</p>
+    <p v-if="storageError || placementError" role="alert" class="shrink-0 max-h-12 overflow-y-auto text-xs text-red-700 mt-2">{{ storageError || placementError }}</p>
     <div class="flex-1 min-h-0 overflow-y-auto my-3 flex flex-col gap-4" aria-label="任务列表">
       <div
         v-for="task in tasks"
@@ -234,11 +236,22 @@ onMounted(() => {
     </div>
     
   </div>
+  </div>
 </template>
 
 <style scoped>
+.widget-shell { width: fit-content; max-width: 100vw; }
 .task-card { width: min(360px, 100vw); height: min(450px, 100dvh); padding: clamp(12px, 5.5vw, 20px); overflow: hidden; }
 .task-actions { margin-right: 2px; }
+.drag-handle { cursor: grab; touch-action: none; }
+.drag-handle.is-dragging { cursor: grabbing; }
+.drag-handle.is-pinned { cursor: default; }
+.pin-button { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 26px; border-radius: 4px; color: #888; cursor: pointer; }
+.pin-button svg { transform: rotate(35deg); }
+.pin-button:hover { background: #0000000d; color: #333; }
+.pin-button.pinned { background: #0000000d; color: #222; }
+.pin-button.pinned svg { transform: none; }
+.pin-button:focus-visible { outline: 2px solid #96836a; outline-offset: 1px; }
 @media (max-height: 380px) {
   .task-card { padding-top: 12px; padding-bottom: 12px; }
   .task-header { padding-bottom: 8px; }
