@@ -7,7 +7,6 @@ type ThemeMetadata = {
   description: string;
   location?: string;
   category: "nature" | "china" | "world";
-  isNew: boolean;
 };
 
 async function themeCatalog(page: Page): Promise<ThemeMetadata[]> {
@@ -17,15 +16,6 @@ async function themeCatalog(page: Page): Promise<ThemeMetadata[]> {
     return SKETCH_THEMES;
   });
 }
-
-const themes = [
-  ["午后小憩", "cat"],
-  ["山野来信", "mountains"],
-  ["海岸微风", "coast"],
-  ["林间小屋", "cabin"],
-  ["花与小书", "botanical"],
-  ["月色入湖", "moon"],
-] as const;
 
 async function previewPng(dialog: Locator): Promise<Buffer> {
   const preview = dialog.getByRole("img", { name: "导出卡片预览" });
@@ -106,61 +96,50 @@ test("长列表可滚动，长文本不挤出按钮，浏览器导出有效 PNG"
   await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeEnabled();
 });
 
-test("六款插画生成不同预览，选择会保存且关闭导出不改变任务", async ({ page }) => {
-  await page.setViewportSize({ width: 360, height: 450 });
+test("每次打开随机选画，忽略旧偏好并保持待办不变", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("desknote_export_theme_v1", "moon"));
   await page.goto("/");
+  const catalog = await themeCatalog(page);
   await page.getByRole("checkbox").first().click();
   const savedTasks = await page.evaluate(() => localStorage.getItem("desknote_tasks_v1"));
   const checkboxCount = await page.getByRole("checkbox").count();
-  await page.getByTitle("导出卡片").click();
+  const exportButton = page.getByTitle("导出卡片");
   const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  await expect(dialog.getByRole("button", { name: "插画：午后小憩", exact: true })).toHaveAttribute("aria-pressed", "true");
-  const previews = new Set<string>();
-  let finalPreviewDigest = "";
-  for (const [name, value] of themes) {
-    const choice = dialog.getByRole("button", { name: `插画：${name}`, exact: true });
-    await choice.click();
-    await expect(choice).toHaveAttribute("aria-pressed", "true");
-    await expect(dialog.getByRole("group", { name: "插画主题", exact: true }).getByRole("button", { pressed: true })).toHaveCount(1);
+  const digests = new Set<string>();
+  // Cover both ends of the random range, a middle entry, and both new collections.
+  for (const value of [0, 0.5, 26.5 / catalog.length, 32.5 / catalog.length, 0.999999]) {
+    await page.evaluate((random) => { Math.random = () => random; }, value);
+    await exportButton.click();
     const png = await previewPng(dialog);
-    await expect(choice).toBeInViewport({ ratio: 1 });
-    await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeInViewport({ ratio: 1 });
-    expect(await dialog.evaluate((panel) => panel.scrollHeight <= panel.clientHeight)).toBe(true);
-    expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    finalPreviewDigest = pngDigest(png);
-    previews.add(finalPreviewDigest);
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("desknote_export_theme_v1"))).toBe(value);
+    await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true }))
+      .toHaveAttribute("data-theme", catalog[Math.floor(value * catalog.length)].id);
+    await expect(dialog.getByRole("button")).toHaveCount(2);
+    await expect(dialog.getByRole("searchbox")).toHaveCount(0);
+    await expect(dialog.getByRole("group")).toHaveCount(0);
+    digests.add(pngDigest(png));
+    await dialog.getByRole("button", { name: "返回待办", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(exportButton).toBeFocused();
   }
-  expect(previews.size).toBe(themes.length);
-  await dialog.getByRole("button", { name: "返回待办", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect(page.getByTitle("导出卡片")).toBeFocused();
+  expect(digests.size).toBe(5);
   await expect(page.getByRole("checkbox")).toHaveCount(checkboxCount);
   expect(await page.evaluate(() => localStorage.getItem("desknote_tasks_v1"))).toBe(savedTasks);
-
-  await page.reload();
-  await page.getByTitle("导出卡片").click();
-  await expect(dialog.getByRole("button", { name: "插画：月色入湖", exact: true })).toHaveAttribute("aria-pressed", "true");
-  const restoredPreview = await previewPng(dialog);
-  expect(pngDigest(restoredPreview)).toBe(finalPreviewDigest);
-  expect(await page.evaluate(() => localStorage.getItem("desknote_tasks_v1"))).toBe(savedTasks);
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(page.getByTitle("导出卡片")).toBeFocused();
+  expect(await page.evaluate(() => localStorage.getItem("desknote_export_theme_v1"))).toBe("moon");
 });
 
-test("快速切换时较早请求的 PNG 不会覆盖最终插画", async ({ page }) => {
+test("关闭后未完成的预览不会覆盖重新打开的随机插画", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await page.getByTitle("导出卡片").click();
+  const catalog = await themeCatalog(page);
+  const exportButton = page.getByTitle("导出卡片");
   const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  await previewPng(dialog);
-  await dialog.getByRole("button", { name: "插画：月色入湖", exact: true }).click();
-  const moonDigest = pngDigest(await previewPng(dialog));
-  await dialog.getByRole("button", { name: "插画：午后小憩", exact: true }).click();
-  expect(pngDigest(await previewPng(dialog))).not.toBe(moonDigest);
+  await page.evaluate(() => { Math.random = () => 0.999999; });
+  await exportButton.click();
+  const expectedDigest = pngDigest(await previewPng(dialog));
+  await dialog.getByRole("button", { name: "返回待办", exact: true }).click();
 
-  // Keep encoders in flight, then complete them newest first to reproduce
-  // an older render finishing after the user's final selection.
+  // Finish the old, unmounted panel's encoding after the new panel's encoding.
   await page.evaluate(() => {
     const originalToBlob = HTMLCanvasElement.prototype.toBlob;
     const pending: Array<() => void> = [];
@@ -175,15 +154,19 @@ test("快速切换时较早请求的 PNG 不会覆盖最终插画", async ({ pag
       for (const complete of pending.reverse()) complete();
       delete document.documentElement.dataset.pendingCardPngs;
     }, { once: true });
+    Math.random = () => 0;
   });
-  const rapidChoices = ["山野来信", "海岸微风", "月色入湖"];
-  for (const [index, name] of rapidChoices.entries()) {
-    await dialog.getByRole("button", { name: `插画：${name}`, exact: true }).click();
-    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.pendingCardPngs)).toBe(String(index + 1));
-  }
+  await exportButton.click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.pendingCardPngs)).toBe("1");
+  await dialog.getByRole("button", { name: "返回待办", exact: true }).click();
+  await page.evaluate(() => { Math.random = () => 0.999999; });
+  await exportButton.click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.pendingCardPngs)).toBe("2");
   await page.evaluate(() => window.dispatchEvent(new Event("desknote:test-release-pngs")));
-  await expect(dialog.getByRole("button", { name: "插画：月色入湖", exact: true })).toHaveAttribute("aria-pressed", "true");
-  expect(pngDigest(await previewPng(dialog))).toBe(moonDigest);
+  expect(pngDigest(await previewPng(dialog))).toBe(expectedDigest);
+  await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true }))
+    .toHaveAttribute("data-theme", catalog.at(-1)!.id);
+  expect(errors).toEqual([]);
 });
 
 test("38款原创线稿完整有效，PNG各不相同且重复导出保持一致", async ({ page }) => {
@@ -238,145 +221,6 @@ test("38款原创线稿完整有效，PNG各不相同且重复导出保持一致
   expect(new Set(digests.map(({ first }) => first)).size).toBe(38);
 });
 
-test("建筑分类、名称地点描述搜索及空态在紧凑窗口内可用", async ({ page }) => {
-  await page.setViewportSize({ width: 360, height: 450 });
-  await page.goto("/");
-  const catalog = await themeCatalog(page);
-  await page.getByTitle("导出卡片").click();
-  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  const categories = dialog.getByRole("group", { name: "主题分类", exact: true });
-  const choices = dialog.getByRole("group", { name: "插画主题", exact: true });
-  const search = dialog.getByRole("searchbox", { name: "搜索插画", exact: true });
-  await previewPng(dialog);
-  await expect(categories.getByRole("button", { name: "分类：全部", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(choices.getByRole("button")).toHaveCount(38);
-  expect(await choices.evaluate((list) => list.scrollHeight > list.clientHeight)).toBe(true);
-  for (const [name, count] of [["日常风景", 12], ["中国建筑", 13], ["世界建筑", 13], ["全部", 38]] as const) {
-    const category = categories.getByRole("button", { name: `分类：${name}`, exact: true });
-    await category.click();
-    await expect(category).toHaveAttribute("aria-pressed", "true");
-    await expect(categories.getByRole("button", { pressed: true })).toHaveCount(1);
-    await expect(choices.getByRole("button")).toHaveCount(count);
-  }
-
-  const architecture = catalog.find(({ category }) => category === "china")!;
-  for (const term of [architecture.name, architecture.location ?? "", architecture.description]) {
-    expect(term).toBeTruthy();
-    await search.fill(term);
-    const expected = catalog.filter((theme) => [theme.name, theme.location, theme.description]
-      .some((field) => (field ?? "").toLocaleLowerCase().includes(term.toLocaleLowerCase())));
-    await expect(choices.getByRole("button")).toHaveCount(expected.length);
-    for (const theme of expected) {
-      await expect(choices.getByRole("button", { name: `插画：${theme.name}`, exact: true })).toBeVisible();
-    }
-  }
-
-  await categories.getByRole("button", { name: "分类：世界建筑", exact: true }).click();
-  await search.fill("不存在的建筑xyz987");
-  await expect(dialog.getByText("没有找到这幅风景", { exact: true })).toBeVisible();
-  await expect(choices.getByRole("button", { name: /^插画：/ })).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeEnabled();
-  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeInViewport({ ratio: 1 });
-  await dialog.getByRole("button", { name: "清除筛选", exact: true }).click();
-  await expect(search).toHaveValue("");
-  await expect(categories.getByRole("button", { name: "分类：全部", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(choices.getByRole("button")).toHaveCount(38);
-  await choices.getByRole("button").last().scrollIntoViewIfNeeded();
-  await expect(choices.getByRole("button").last()).toBeInViewport({ ratio: 1 });
-  await expect(search).toBeInViewport({ ratio: 1 });
-  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeInViewport({ ratio: 1 });
-  expect(await dialog.evaluate((panel) => panel.scrollHeight <= panel.clientHeight && panel.scrollWidth <= panel.clientWidth)).toBe(true);
-});
-
-test("建筑主题记忆分类与预览，放大查看支持返回和Escape且不影响任务", async ({ page }) => {
-  await page.setViewportSize({ width: 360, height: 450 });
-  await page.goto("/");
-  const catalog = await themeCatalog(page);
-  const architecture = catalog.filter(({ category }) => category === "world").at(-1)!;
-  const tasksBefore = await page.evaluate(() => localStorage.getItem("desknote_tasks_v1"));
-  await page.getByTitle("导出卡片").click();
-  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  await dialog.getByRole("button", { name: "分类：世界建筑", exact: true }).click();
-  const choice = dialog.getByRole("button", { name: `插画：${architecture.name}`, exact: true });
-  await choice.click();
-  const digest = pngDigest(await previewPng(dialog));
-  await expect(choice).toHaveAttribute("aria-pressed", "true");
-  await expect(choice).toBeInViewport({ ratio: 1 });
-  await dialog.getByRole("button", { name: "返回待办", exact: true }).click();
-  await page.reload();
-  await page.getByTitle("导出卡片").click();
-  await expect(dialog.getByRole("button", { name: "分类：世界建筑", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(choice).toHaveAttribute("aria-pressed", "true");
-  expect(pngDigest(await previewPng(dialog))).toBe(digest);
-  await expect(choice).toBeInViewport({ ratio: 1 });
-
-  const zoomButton = dialog.getByRole("button", { name: "放大预览", exact: true });
-  await zoomButton.click();
-  const enlarged = dialog.getByRole("img", { name: "放大卡片预览", exact: true });
-  await expect(enlarged).toBeVisible();
-  const enlargedPng = Buffer.from(await enlarged.evaluate(async (image: HTMLImageElement) => (
-    Array.from(new Uint8Array(await (await fetch(image.currentSrc)).arrayBuffer()))
-  )));
-  expect(pngDigest(enlargedPng)).toBe(digest);
-  await expect(dialog.getByRole("button", { name: "返回选图", exact: true })).toBeInViewport({ ratio: 1 });
-  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeInViewport({ ratio: 1 });
-  expect(await dialog.evaluate((panel) => panel.scrollHeight <= panel.clientHeight)).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(enlarged).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-  await expect(zoomButton).toBeFocused();
-  await zoomButton.click();
-  await dialog.getByRole("button", { name: "返回选图", exact: true }).click();
-  await expect(enlarged).toHaveCount(0);
-  await expect(choice).toHaveAttribute("aria-pressed", "true");
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(page.getByTitle("导出卡片")).toBeFocused();
-  expect(await page.evaluate(() => localStorage.getItem("desknote_tasks_v1"))).toBe(tasksBefore);
-});
-
-test("319像素窄预览无横向溢出，建筑筛选与放大保存按钮可达", async ({ page }) => {
-  await page.setViewportSize({ width: 319, height: 450 });
-  await page.goto("/");
-  const catalog = await themeCatalog(page);
-  const architecture = catalog.find(({ category }) => category === "china")!;
-  const exportButton = page.getByTitle("导出卡片");
-  await expect(exportButton).toBeInViewport({ ratio: 1 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await exportButton.click();
-  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  const categories = dialog.getByRole("group", { name: "主题分类", exact: true });
-  const saveButton = dialog.getByRole("button", { name: "保存 PNG", exact: true });
-  await previewPng(dialog);
-  await expect(dialog.getByRole("button", { name: "返回待办", exact: true })).toBeInViewport({ ratio: 1 });
-  await expect(saveButton).toBeInViewport({ ratio: 1 });
-  for (const category of await categories.getByRole("button").all()) {
-    await expect(category).toBeInViewport({ ratio: 1 });
-  }
-  expect(await dialog.evaluate((panel) => panel.scrollWidth <= panel.clientWidth)).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-
-  await categories.getByRole("button", { name: "分类：中国建筑", exact: true }).click();
-  const search = dialog.getByRole("searchbox", { name: "搜索插画", exact: true });
-  await search.fill(architecture.name);
-  const choice = dialog.getByRole("button", { name: `插画：${architecture.name}`, exact: true });
-  await choice.click();
-  await expect(choice).toHaveAttribute("aria-pressed", "true");
-  await expect(choice).toBeInViewport({ ratio: 1 });
-  const digest = pngDigest(await previewPng(dialog));
-  await dialog.getByRole("button", { name: "放大预览", exact: true }).click();
-  await expect(dialog.getByRole("img", { name: "放大卡片预览", exact: true })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "返回选图", exact: true })).toBeInViewport({ ratio: 1 });
-  await expect(saveButton).toBeInViewport({ ratio: 1 });
-  await expect(saveButton).toBeEnabled();
-  expect(await dialog.evaluate((panel) => panel.scrollWidth <= panel.clientWidth && panel.scrollHeight <= panel.clientHeight)).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(search).toHaveValue(architecture.name);
-  await expect(choice).toHaveAttribute("aria-pressed", "true");
-  expect(pngDigest(await previewPng(dialog))).toBe(digest);
-});
-
 for (const viewport of [{ width: 360, height: 450 }, { width: 319, height: 400 }, { width: 280, height: 360 }, { width: 280, height: 320 }]) {
   test(`紧凑视口${viewport.width}×${viewport.height}添加、滚动与导出操作完整可见`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -419,104 +263,80 @@ for (const viewport of [{ width: 360, height: 450 }, { width: 319, height: 400 }
     const save = dialog.getByRole("button", { name: "保存 PNG", exact: true });
     await previewPng(dialog);
     await expect(dialog.getByRole("button", { name: "返回待办", exact: true })).toBeInViewport({ ratio: 1 });
-    for (const category of await dialog.getByRole("group", { name: "主题分类", exact: true }).getByRole("button").all()) {
-      await expect(category).toBeInViewport({ ratio: 1 });
-    }
-    const search = dialog.getByRole("searchbox", { name: "搜索插画", exact: true });
-    await expect(search).toBeInViewport({ ratio: 1 });
-    const choice = dialog.getByRole("group", { name: "插画主题", exact: true }).getByRole("button").last();
-    await choice.click();
-    await expect(choice).toBeInViewport({ ratio: 1 });
-    await previewPng(dialog);
+    await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true })).toBeInViewport({ ratio: 1 });
     await expect(save).toBeInViewport({ ratio: 1 });
     expect(await dialog.evaluate((el) => el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth)).toBe(true);
     await assertContained();
-    await dialog.getByRole("button", { name: "放大预览", exact: true }).click();
-    await expect(dialog.getByRole("button", { name: "返回选图", exact: true })).toBeInViewport({ ratio: 1 });
-    await expect(save).toBeInViewport({ ratio: 1 });
-    await page.keyboard.press("Escape");
-    await expect(choice).toBeInViewport({ ratio: 1 });
     await dialog.getByRole("button", { name: "返回待办", exact: true }).click();
     await expect(exportButton).toBeFocused();
     await assertContained();
   });
 }
 
-test("本期新增筛选与分类搜索组合可用，窄窗口内缩略图正常显示", async ({ page }) => {
+test("导出页键盘焦点循环，输入法 Escape 不会误关闭", async ({ page }) => {
+  await page.goto("/");
+  const exportButton = page.getByTitle("导出卡片");
+  await exportButton.click();
+  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
+  const back = dialog.getByRole("button", { name: "返回待办", exact: true });
+  const save = dialog.getByRole("button", { name: "保存 PNG", exact: true });
+  await previewPng(dialog);
+  await expect(back).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(save).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(back).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(save).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(back).toBeFocused();
+  await back.dispatchEvent("keydown", { key: "Escape", isComposing: true });
+  await expect(dialog).toBeVisible();
+  await back.dispatchEvent("keydown", { key: "Escape", keyCode: 229 });
+  await expect(dialog).toBeVisible();
+  await back.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(exportButton).toBeFocused();
+});
+
+test("预览失败可重试，重试和重复保存都保持同一随机插画", async ({ page }) => {
   await page.setViewportSize({ width: 280, height: 320 });
   await page.goto("/");
   const catalog = await themeCatalog(page);
-  expect(catalog.filter((theme) => theme.isNew)).toHaveLength(12);
-  await page.getByTitle("导出卡片").click();
-  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  const fresh = dialog.getByRole("button", { name: "仅看新增插画", exact: true });
-  const choices = dialog.getByRole("group", { name: "插画主题", exact: true });
-  await expect(fresh).toBeInViewport({ ratio: 1 });
-  await fresh.click();
-  await expect(fresh).toHaveAttribute("aria-pressed", "true");
-  await expect(choices.getByRole("button")).toHaveCount(12);
-  await dialog.getByRole("button", { name: "分类：世界建筑", exact: true }).click();
-  await expect(choices.getByRole("button")).toHaveCount(3);
-  const theme = catalog.find((theme) => theme.isNew && theme.category === "world")!;
-  const choice = choices.getByRole("button", { name: `插画：${theme.name}`, exact: true });
-  await choice.scrollIntoViewIfNeeded();
-  await expect.poll(() => choice.locator("img").evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth === 660)).toBe(true);
-  await choice.click();
-  await previewPng(dialog);
-  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeInViewport({ ratio: 1 });
-  await dialog.getByRole("searchbox", { name: "搜索插画", exact: true }).fill("没有这座建筑xyz");
-  await expect(dialog.getByText("没有找到这幅风景", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "清除筛选", exact: true }).click();
-  await expect(fresh).toHaveAttribute("aria-pressed", "false");
-  await expect(choices.getByRole("button")).toHaveCount(38);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-});
-
-test("中文搜索取消输入法候选词时不会误关导出页", async ({ page }) => {
-  await page.goto("/");
-  await page.getByTitle("导出卡片").click();
-  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  const search = dialog.getByRole("searchbox", { name: "搜索插画", exact: true });
-  await search.fill("山");
-  await search.dispatchEvent("keydown", { key: "Escape", isComposing: true });
-  await expect(dialog).toBeVisible();
-  await expect(search).toHaveValue("山");
-  await search.dispatchEvent("keydown", { key: "Escape", keyCode: 229 });
-  await expect(dialog).toBeVisible();
-  await search.press("Escape");
-  await expect(dialog).toHaveCount(0);
-});
-
-test("插画渲染失败会清除旧预览，重试后预览和下载恢复一致", async ({ page }) => {
-  await page.setViewportSize({ width: 280, height: 320 });
-  await page.goto("/");
-  await page.getByTitle("导出卡片").click();
-  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
-  await previewPng(dialog);
-  await page.evaluate(() => {
+  await page.evaluate((count) => {
+    Math.random = () => 1.5 / count;
     const original = HTMLCanvasElement.prototype.toBlob;
     HTMLCanvasElement.prototype.toBlob = function (callback) {
       HTMLCanvasElement.prototype.toBlob = original;
       setTimeout(() => callback(null), 0);
     };
-  });
-  await dialog.getByRole("button", { name: "插画：山野来信", exact: true }).click();
+  }, catalog.length);
+  await page.getByTitle("导出卡片").click();
+  const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
+  const preview = dialog.getByRole("img", { name: "导出卡片预览", exact: true });
+  const save = dialog.getByRole("button", { name: "保存 PNG", exact: true });
   await expect(dialog.getByRole("alert")).toContainText("图片编码失败");
-  await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "保存 PNG", exact: true })).toBeDisabled();
+  await expect(preview).toHaveCount(0);
+  await expect(save).toBeDisabled();
   const retry = dialog.getByRole("button", { name: "重试预览", exact: true });
   await expect(retry).toBeInViewport({ ratio: 1 });
+  await page.evaluate(() => { Math.random = () => 0.999999; });
   await retry.click();
   const restored = await previewPng(dialog);
-  await expect(dialog.getByRole("img", { name: "导出卡片预览", exact: true })).toHaveAttribute("data-theme", "mountains");
+  await expect(preview).toHaveAttribute("data-theme", catalog[1].id);
   await expect(dialog.getByRole("alert")).toHaveCount(0);
-  const downloadPromise = page.waitForEvent("download");
-  await dialog.getByRole("button", { name: "保存 PNG", exact: true }).click();
-  const download = await downloadPromise;
-  const stream = await download.createReadStream();
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  expect(pngDigest(Buffer.concat(chunks))).toBe(pngDigest(restored));
+  await expect(retry).toHaveCount(0);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const downloadPromise = page.waitForEvent("download");
+    await save.click();
+    const download = await downloadPromise;
+    const stream = await download.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    expect(pngDigest(Buffer.concat(chunks))).toBe(pngDigest(restored));
+    await expect(preview).toHaveAttribute("data-theme", catalog[1].id);
+    expect(pngDigest(await previewPng(dialog))).toBe(pngDigest(restored));
+  }
 });
 
 test("打开损坏缓存不会覆盖原记录，编辑后保留备份", async ({ page }) => {

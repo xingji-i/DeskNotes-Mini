@@ -14,59 +14,28 @@ const NATURE_THEMES = [
   { id: "moon", name: "月色入湖", description: "月亮落在水面，今天也可以安心收尾。" },
 ] as const;
 
-const ORIGINAL_THEMES = [
-  ...NATURE_THEMES.map((theme) => ({ ...theme, category: "nature" as const, location: "日常与自然" })),
-  ...CHINA_THEMES.map(({ scene: _scene, ...theme }) => theme),
-  ...WORLD_THEMES.map(({ scene: _scene, ...theme }) => theme),
-] as const;
-
-const LATEST_COLLECTION = [...NATURE_COLLECTION_THEMES, ...ARCHITECTURE_COLLECTION_THEMES] as const;
+const COLLECTION_THEMES = [...CHINA_THEMES, ...WORLD_THEMES, ...NATURE_COLLECTION_THEMES, ...ARCHITECTURE_COLLECTION_THEMES] as const;
 
 export const SKETCH_THEMES = [
-  ...ORIGINAL_THEMES.map((theme) => ({ ...theme, isNew: false })),
-  ...LATEST_COLLECTION.map(({ scene: _scene, ...theme }) => ({ ...theme, isNew: true })),
+  ...NATURE_THEMES.map((theme) => ({ ...theme, category: "nature" as const, location: "日常与自然" })),
+  ...COLLECTION_THEMES.map(({ scene: _scene, ...theme }) => theme),
 ] as const;
 
-export const SKETCH_CATEGORIES = [
-  { id: "all", name: "全部" },
-  { id: "nature", name: "日常风景" },
-  { id: "china", name: "中国建筑" },
-  { id: "world", name: "世界建筑" },
-] as const;
-export type SketchCategory = typeof SKETCH_CATEGORIES[number]["id"];
 export type SketchTheme = typeof SKETCH_THEMES[number]["id"];
-export const THEME_STORAGE_KEY = "desknote_export_theme_v1";
-
-export const isSketchTheme = (value: unknown): value is SketchTheme =>
-  SKETCH_THEMES.some((theme) => theme.id === value);
 
 const scenes: Record<string, string> = {
   ...landscapeScenes,
   ...lifeScenes,
-  ...Object.fromEntries(CHINA_THEMES.map((theme) => [theme.id, theme.scene])),
-  ...Object.fromEntries(WORLD_THEMES.map((theme) => [theme.id, theme.scene])),
-  ...Object.fromEntries(LATEST_COLLECTION.map((theme) => [theme.id, theme.scene])),
+  ...Object.fromEntries(COLLECTION_THEMES.map((theme) => [theme.id, theme.scene])),
 };
 
 /** 内联素材均为本地原创线稿，预览与导出使用同一份绘图。 */
-export function createSketchSvg(theme: SketchTheme, thumbnail = false): string {
+export function createSketchSvg(theme: SketchTheme): string {
   const selected = SKETCH_THEMES.find((item) => item.id === theme) ?? SKETCH_THEMES[0];
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="660" height="220" viewBox="0 0 660 220" fill="none" stroke="#45413e" stroke-width="${thumbnail ? 2.8 : 1.65}" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${selected.name}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="660" height="220" viewBox="0 0 660 220" fill="none" stroke="#45413e" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${selected.name}">
     <title>${selected.name}</title>
     ${scenes[selected.id]}
   </svg>`;
-}
-
-const thumbnailUrls = new Map<SketchTheme, string>();
-
-/** A single image node per scene keeps the growing thumbnail grid lightweight. */
-export function getSketchThumbnailUrl(theme: SketchTheme): string {
-  let url = thumbnailUrls.get(theme);
-  if (!url) {
-    url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(createSketchSvg(theme, true))}`;
-    thumbnailUrls.set(theme, url);
-  }
-  return url;
 }
 
 export async function loadSketchImage(theme: SketchTheme): Promise<HTMLImageElement> {
