@@ -1,0 +1,43 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Test data and window geometry
+        run: npm test
+      - name: Build Windows application and installer
+        run: npm run tauri -- build --bundles nsis -- --locked
+      - name: Upload application
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskNote-Mini-Windows-x64
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            src-tauri/target/release/desknote-mini.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe
