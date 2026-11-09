@@ -321,6 +321,12 @@ test("原生 UI 顶部拖动调用窗口命令，钉住和重启后的状态会�
   const handle = page.getByTestId("widget-drag-handle");
   // A native note moves its OS window, never the browser's inner card.
   await expect(page.locator(".widget-shell")).not.toHaveCSS("position", "fixed");
+  const addHint = page.getByRole("button", { name: "建议只设置最紧急的5项", exact: true });
+  const input = page.getByRole("textbox", { name: "新任务", exact: true });
+  await addHint.click();
+  await expect(input).toBeFocused();
+  expect(await dragCount()).toBe(0);
+  await input.press("Escape");
   await handle.click({ position: { x: 8, y: 8 } });
   await expect.poll(dragCount).toBe(1);
   await page.getByRole("button", { name: "钉住位置", exact: true }).click();
@@ -333,9 +339,10 @@ test("原生 UI 顶部拖动调用窗口命令，钉住和重启后的状态会�
   await expect(page.getByRole("button", { name: "取消钉住", exact: true })).toHaveAttribute("aria-pressed", "true");
   await handle.click({ position: { x: 8, y: 8 } });
   expect(await dragCount()).toBe(0);
-  await page.getByTitle("添加（建议只设置5件）").click();
-  await page.getByRole("textbox", { name: "新任务", exact: true }).fill("钉住后可以编辑的原生便签");
-  await page.getByRole("textbox", { name: "新任务", exact: true }).press("Enter");
+  await addHint.click();
+  await expect(input).toBeFocused();
+  await input.fill("钉住后可以编辑的原生便签");
+  await input.press("Enter");
   await expect(page.getByRole("checkbox", { name: "钉住后可以编辑的原生便签", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "取消钉住", exact: true }).click();
   await handle.click({ position: { x: 8, y: 8 } });

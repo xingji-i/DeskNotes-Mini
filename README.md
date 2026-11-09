@@ -6,7 +6,7 @@
 ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen?logo=vuedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey?logo=windows&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.0-green)
+![Version](https://img.shields.io/badge/version-0.1.1-green)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
@@ -36,11 +36,11 @@
 └──────────────────────────────┘
 ```
 
-- 点击右上角 **＋** 添加任务，回车确认，Esc 取消
+- 点击提示文字或右上角 **＋** 添加任务，回车确认，Esc 取消
 - 点击复选框切换完成状态（已完成项自动沉底并加删除线）
 - 双击任务文本或点击 **✎** 进入编辑；点击 **×** 删除
 - 点击 **📥** 自动随机搭配一张插画，查看卡片预览后点击 **保存 PNG**
-- 按住顶部日期或提示文字拖动便签；点击图钉固定位置，再次点击可继续移动
+- 按住顶部日期拖动便签，点击图钉固定位置，再次点击可继续移动
 
 ## 🛠️ 技术栈
 
@@ -81,6 +81,8 @@
 
 ## 🚀 快速开始
 
+可在 [GitHub Releases](https://github.com/xingji-i/DeskNotes-Mini/releases) 下载 Windows x64 安装包。
+
 ### 1. 克隆项目
 
 ```bash
@@ -120,12 +122,12 @@ npm run tauri build
 ### 日常使用
 
 1. **启动**：双击运行 `desknote-mini.exe`（或安装后从开始菜单启动），小组件首次出现在**屏幕右上角**，之后恢复上次位置
-2. **添加任务**：点击右上角 **＋**，输入内容后按 **Enter** 确认（**Esc** 取消）；建议只保留最紧急的 5 项，保持专注
+2. **添加任务**：点击“建议只设置最紧急的5项”或右上角 **＋**，输入内容后按 **Enter** 确认（**Esc** 取消）
 3. **编辑任务**：**双击**任务文字，或点击右侧 **✎** 按钮，修改后 **Enter** 保存
 4. **完成任务**：点击左侧方框打勾 ✓，任务自动移入"已完成"区域并显示删除线；再次点击可撤销
 5. **删除任务**：点击任务右侧的 **×**
 6. **导出卡片**：点击 **📥**，自动随机搭配一张插画并显示完整卡片，点击 **保存 PNG** 即可保存；桌面版会选择保存位置，浏览器版直接下载。关闭预览即可返回待办；每次重新打开导出都会重新随机，当前预览内重复保存或重试会保留同一张插画
-7. **移动与钉住**：按住顶部日期或提示文字拖到合适位置，点击图钉锁定，再点一次解锁。钉住只锁定拖动，任务仍可编辑，也不会变成置顶窗口。位置与钉住状态会记住；屏幕布局变化时会校正位置，避免便签落在屏幕外
+7. **移动与钉住**：按住顶部日期拖到合适位置，点击图钉锁定，再点一次解锁。钉住只锁定拖动，任务仍可编辑，也不会变成置顶窗口。位置与钉住状态会记住；屏幕布局变化时会校正位置，避免便签落在屏幕外
 
 ### 数据说明
 

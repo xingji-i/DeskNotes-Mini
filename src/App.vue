@@ -120,11 +120,13 @@ watch(showAdd, async (visible) => {
   >
     <div
       class="task-header border-b border-black/30 pb-3 text-sm tracking-[0.3em] font-mono flex items-center gap-2 shrink-0" @click.stop>
-        <div class="drag-handle flex items-center gap-2 min-w-0" :class="[{ 'is-pinned': pinned, 'is-dragging': dragging }, showAdd ? 'shrink-0' : 'flex-1']"
-          data-testid="widget-drag-handle" :title="pinned ? '已钉住，点击图钉后可移动' : '拖动便签'" @pointerdown="startDragging">
-          <div class="shrink-0">{{ todayShort }}</div>
-          <div v-show="!showAdd" class="min-w-0 text-xs text-black/40 tracking-[2.6px] truncate">建议只设置最紧急的5项</div>
-        </div>
+      <div class="drag-handle shrink-0" :class="{ 'is-pinned': pinned, 'is-dragging': dragging }"
+        data-testid="widget-drag-handle" :title="pinned ? '已钉住，点击图钉后可移动' : '拖动便签'" @pointerdown="startDragging">
+        {{ todayShort }}
+      </div>
+      <button v-if="!showAdd" type="button"
+        class="flex-1 min-w-0 text-left text-xs text-black/40 tracking-[2.6px] truncate cursor-pointer hover:text-black/60"
+        @click="showAdd = true">建议只设置最紧急的5项</button>
       <div class="task-actions flex items-center gap-1" :class="showAdd ? 'flex-1 min-w-0' : 'shrink-0'">
         <template v-if="showAdd">
           <input

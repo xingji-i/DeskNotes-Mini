@@ -37,7 +37,7 @@ test("中文输入、编辑聚焦、完成排序、持久化及删除", async ({
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await page.getByTitle("添加（建议只设置5件）").click();
+  await page.getByRole("button", { name: "建议只设置最紧急的5项", exact: true }).click();
   const input = page.getByRole("textbox", { name: "新任务" });
   await expect(input).toBeFocused();
   await input.fill("中文候选词");
