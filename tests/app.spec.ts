@@ -106,8 +106,8 @@ test("每次打开随机选画，忽略旧偏好并保持待办不变", async ({
   const exportButton = page.getByTitle("导出卡片");
   const dialog = page.getByRole("dialog", { name: "导出卡片", exact: true });
   const digests = new Set<string>();
-  // Cover both ends of the random range, a middle entry, and both new collections.
-  for (const value of [0, 0.5, 26.5 / catalog.length, 32.5 / catalog.length, 0.999999]) {
+  // Sample the start, interior, and end of the combined catalog.
+  for (const value of [0, 0.25, 0.5, 0.75, 0.999999]) {
     await page.evaluate((random) => { Math.random = () => random; }, value);
     await exportButton.click();
     const png = await previewPng(dialog);
@@ -169,15 +169,15 @@ test("关闭后未完成的预览不会覆盖重新打开的随机插画", async
   expect(errors).toEqual([]);
 });
 
-test("38款原创线稿完整有效，PNG各不相同且重复导出保持一致", async ({ page }) => {
+test("全部原创线稿完整有效，PNG各不相同且重复导出保持一致", async ({ page }) => {
   await page.goto("/");
   const catalog = await themeCatalog(page);
-  expect(catalog).toHaveLength(38);
-  expect(new Set(catalog.map(({ id }) => id)).size).toBe(38);
-  expect(new Set(catalog.map(({ name }) => name)).size).toBe(38);
-  expect(catalog.filter(({ category }) => category === "nature")).toHaveLength(12);
-  expect(catalog.filter(({ category }) => category === "china")).toHaveLength(13);
-  expect(catalog.filter(({ category }) => category === "world")).toHaveLength(13);
+  expect(catalog).toHaveLength(88);
+  expect(new Set(catalog.map(({ id }) => id)).size).toBe(catalog.length);
+  expect(new Set(catalog.map(({ name }) => name)).size).toBe(catalog.length);
+  expect(catalog.filter(({ category }) => category === "nature")).toHaveLength(49);
+  expect(catalog.filter(({ category }) => category === "china")).toHaveLength(19);
+  expect(catalog.filter(({ category }) => category === "world")).toHaveLength(20);
   const digests = await page.evaluate(async (themeValues) => {
     const modulePath = "/src/lib/exportCard.ts";
     const sketchModulePath = "/src/lib/sketches.ts";
@@ -218,7 +218,7 @@ test("38款原创线稿完整有效，PNG各不相同且重复导出保持一致
     expect(svgValid, `${theme} should be a self-contained valid SVG`).toBe(true);
     expect(second, theme).toBe(first);
   }
-  expect(new Set(digests.map(({ first }) => first)).size).toBe(38);
+  expect(new Set(digests.map(({ first }) => first)).size).toBe(catalog.length);
 });
 
 for (const viewport of [{ width: 360, height: 450 }, { width: 319, height: 400 }, { width: 280, height: 360 }, { width: 280, height: 320 }]) {
