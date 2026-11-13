@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref, watch, nextTick } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, ref, watch, nextTick } from "vue";
 
 import { useTasks } from "./composables/useTasks";
 import { useToday } from "./composables/useToday";
 import { useWidgetPlacement } from "./composables/useWidgetPlacement";
-import { createTaskId, toggleTaskStatus, type TodoItem } from "./lib/tasks";
+import {
+  createTaskId, moveTask, moveTaskBy, nextTag, sortTasksByTag, toggleTaskStatus,
+  type TaskTag, type TodoItem,
+} from "./lib/tasks";
 
 const todayShort = useToday();
 const { tasks, storageError } = useTasks();
@@ -99,6 +102,83 @@ const handleInputKey = (event: KeyboardEvent, submit: () => void, cancel: () => 
   }
 };
 
+// 复杂版：手动排序与颜色标签。切回简洁版只隐藏控件，顺序和标签都保留。
+const MODE_KEY = "desknote_mode_v1";
+const readComplexMode = () => {
+  try {
+    return window.localStorage.getItem(MODE_KEY) === "complex";
+  } catch {
+    return false;
+  }
+};
+const complex = ref(readComplexMode());
+watch(complex, (enabled) => {
+  cancelReorder();
+  try {
+    window.localStorage.setItem(MODE_KEY, enabled ? "complex" : "simple");
+  } catch {
+    // 模式只是界面偏好，保存失败时本次仍可正常使用。
+  }
+});
+
+const TAG_NAMES: Record<TaskTag, string> = { red: "红色", orange: "橙色", blue: "蓝色" };
+const tagName = (tag: TaskTag | undefined) => (tag ? TAG_NAMES[tag] : "无");
+const cycleTag = (task: TodoItem) => {
+  const tag = nextTag(task.tag);
+  if (tag) task.tag = tag;
+  else delete task.tag;
+};
+const sortByTag = () => {
+  cancelEdit();
+  tasks.value = sortTasksByTag(tasks.value);
+};
+
+const reorderingId = ref<number | null>(null);
+// 窗口不抢焦点且 Tauri 会接管原生拖放，所以用指针事件实现拖动排序。
+const handleReorderMove = (event: PointerEvent) => {
+  const id = reorderingId.value;
+  if (id === null) return;
+  const from = tasks.value.findIndex((task) => task.id === id);
+  const rows = cardRef.value?.querySelectorAll<HTMLElement>("[data-task-id]") ?? [];
+  for (const row of rows) {
+    const targetId = Number(row.dataset.taskId);
+    if (targetId === id) continue;
+    const rect = row.getBoundingClientRect();
+    if (event.clientY < rect.top || event.clientY > rect.bottom) continue;
+    // 越过目标行中线才换位，行高不同也不会来回抖动。
+    const middle = rect.top + rect.height / 2;
+    const to = tasks.value.findIndex((task) => task.id === targetId);
+    if (to > from ? event.clientY > middle : event.clientY < middle) {
+      tasks.value = moveTask(tasks.value, id, targetId);
+    }
+    return;
+  }
+};
+const cancelReorder = () => {
+  reorderingId.value = null;
+  window.removeEventListener("pointermove", handleReorderMove);
+  window.removeEventListener("pointerup", cancelReorder);
+  window.removeEventListener("pointercancel", cancelReorder);
+};
+const startReorder = (event: PointerEvent, id: number) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  cancelEdit();
+  reorderingId.value = id;
+  window.addEventListener("pointermove", handleReorderMove);
+  window.addEventListener("pointerup", cancelReorder);
+  window.addEventListener("pointercancel", cancelReorder);
+};
+const handleGripKey = async (event: KeyboardEvent, id: number) => {
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+  event.preventDefault();
+  tasks.value = moveTaskBy(tasks.value, id, event.key === "ArrowUp" ? -1 : 1);
+  // 移动 DOM 节点会让按钮失焦，重新聚焦以便连续按键。
+  await nextTick();
+  cardRef.value?.querySelector<HTMLElement>(`[data-task-id="${id}"] .grip`)?.focus();
+};
+onBeforeUnmount(cancelReorder);
+
 watch(showAdd, async (visible) => {
   if (visible) {
     cancelEdit();
@@ -160,11 +240,27 @@ watch(showAdd, async (visible) => {
       <div
         v-for="task in tasks"
         :key="task.id"
-        class="flex items-center gap-3 text-sm transition-colors shrink-0"
+        class="task-row flex items-center text-sm transition-colors shrink-0"
+        :class="[complex ? 'gap-2' : 'gap-3', { 'is-reordering': reorderingId === task.id }]"
+        :data-task-id="task.id"
         @click.stop
         @focusout="handleEditRowFocusOut($event, task.id)"
         @keydown="handleEditRowKey($event, task.id)"
       >
+        <button
+          v-if="complex"
+          class="grip"
+          :aria-label="`拖动排序：${task.text}`"
+          title="拖动排序（聚焦后可用 ↑ ↓ 键）"
+          @pointerdown="startReorder($event, task.id)"
+          @keydown="handleGripKey($event, task.id)"
+        >
+          <svg viewBox="0 0 8 14" width="8" height="14" fill="currentColor" aria-hidden="true">
+            <circle cx="2" cy="2" r="1.2" /><circle cx="6" cy="2" r="1.2" />
+            <circle cx="2" cy="7" r="1.2" /><circle cx="6" cy="7" r="1.2" />
+            <circle cx="2" cy="12" r="1.2" /><circle cx="6" cy="12" r="1.2" />
+          </svg>
+        </button>
         <button
           class="w-5 h-5 border border-black/60 flex items-center justify-center text-[10px] flex-shrink-0 cursor-pointer"
           role="checkbox"
@@ -174,6 +270,15 @@ watch(showAdd, async (visible) => {
         >
           <span v-if="task.completed">✓</span>
         </button>
+
+        <button
+          v-if="complex"
+          class="tag-dot"
+          :class="[task.tag ? `tag-${task.tag}` : 'tag-none', { 'opacity-50': task.completed }]"
+          :aria-label="`标签：${tagName(task.tag)}，点击切换`"
+          :title="`标签：${tagName(task.tag)}（点击切换 红 → 橙 → 蓝 → 无）`"
+          @click.stop="cycleTag(task)"
+        ></button>
 
         <div class="flex-1 min-w-0" @click.stop>
           <template v-if="editingId === task.id">
@@ -231,10 +336,20 @@ watch(showAdd, async (visible) => {
     </div>
 
     <div
-      class="border-t border-black/20 pt-3 text-center text-xs tracking-[0.2em] text-black/50 shrink-0"
+      class="task-footer border-t border-black/20 pt-3 text-xs text-black/50 shrink-0"
       @click.stop
     >
-      DESKNOTE MINI 
+      <div class="justify-self-start">
+        <button v-if="complex" class="footer-button" title="按标签整理：红 → 橙 → 蓝 → 无标签" @click="sortByTag">按标签排序</button>
+      </div>
+      <span class="tracking-[0.2em] whitespace-nowrap">DESKNOTE MINI</span>
+      <button
+        class="footer-button justify-self-end"
+        :class="{ active: complex }"
+        :aria-pressed="complex"
+        :title="complex ? '切换回简洁版' : '切换到复杂版：可排序、贴标签'"
+        @click="complex = !complex"
+      >复杂版</button>
     </div>
     
   </div>
@@ -253,6 +368,20 @@ watch(showAdd, async (visible) => {
 .pin-button:hover { background: #0000000d; color: #333; }
 .pin-button.pinned { background: #0000000d; color: #222; }
 .pin-button.pinned svg { transform: none; }
+.task-footer { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 4px; }
+.footer-button { padding: 1px 6px; border-radius: 4px; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.footer-button:hover { background: #0000000d; color: #333; }
+.footer-button.active { background: #00000014; color: #222; }
+.grip { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 12px; height: 20px; margin-left: -4px; color: #0000004d; cursor: grab; touch-action: none; }
+.grip:hover { color: #000000b3; }
+.task-row.is-reordering { background: #0000000d; border-radius: 4px; }
+.task-row.is-reordering .grip { color: #000000b3; cursor: grabbing; }
+.tag-dot { flex-shrink: 0; width: 12px; height: 12px; border-radius: 50%; cursor: pointer; }
+.tag-none { border: 1px dashed #00000059; }
+.tag-red { background: #dc2626; }
+.tag-orange { background: #f97316; }
+.tag-blue { background: #2563eb; }
+.grip:focus-visible, .tag-dot:focus-visible, .footer-button:focus-visible { outline: 2px solid #96836a; outline-offset: 1px; }
 .pin-button:focus-visible { outline: 2px solid #96836a; outline-offset: 1px; }
 @media (max-height: 380px) {
   .task-card { padding-top: 12px; padding-bottom: 12px; }

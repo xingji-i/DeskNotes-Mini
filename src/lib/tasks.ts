@@ -1,8 +1,17 @@
+/** Priority order: red first, then orange, then blue. */
+export const TASK_TAGS = ["red", "orange", "blue"] as const;
+export type TaskTag = (typeof TASK_TAGS)[number];
+
 export type TodoItem = {
   id: number;
   text: string;
   completed: boolean;
+  /** Only set in the complex view; absent means untagged. */
+  tag?: TaskTag;
 };
+
+const isTaskTag = (value: unknown): value is TaskTag =>
+  TASK_TAGS.includes(value as TaskTag);
 
 export const STORAGE_KEY = "desknote_tasks_v1";
 
@@ -47,6 +56,39 @@ function nextAvailableId(usedIds: ReadonlySet<number>, now: number): number {
 /** Date-based IDs remain compatible with existing numeric task IDs. */
 export function createTaskId(tasks: readonly TodoItem[], now = Date.now()): number {
   return nextAvailableId(new Set(tasks.map((task) => task.id)), now);
+}
+
+/** Take the target's slot. Tasks never cross the pending/completed boundary. */
+export function moveTask(tasks: readonly TodoItem[], id: number, targetId: number): TodoItem[] {
+  const from = tasks.findIndex((task) => task.id === id);
+  const to = tasks.findIndex((task) => task.id === targetId);
+  const result = [...tasks];
+  if (from === -1 || to === -1 || from === to) return result;
+  if (tasks[from].completed !== tasks[to].completed) return result;
+  const [moved] = result.splice(from, 1);
+  result.splice(to, 0, moved);
+  return result;
+}
+
+/** Move one step up (-1) or down (+1) within the task's own group. */
+export function moveTaskBy(tasks: readonly TodoItem[], id: number, delta: -1 | 1): TodoItem[] {
+  const target = tasks[tasks.findIndex((task) => task.id === id) + delta];
+  return target ? moveTask(tasks, id, target.id) : [...tasks];
+}
+
+/** Next tag in the cycle: none → red → orange → blue → none. */
+export function nextTag(tag: TaskTag | undefined): TaskTag | undefined {
+  return tag === undefined ? TASK_TAGS[0] : TASK_TAGS[TASK_TAGS.indexOf(tag) + 1];
+}
+
+/** Red, orange, blue, then untagged; stable, and pending stays before completed. */
+export function sortTasksByTag(tasks: readonly TodoItem[]): TodoItem[] {
+  const rank = (task: TodoItem) => (task.tag ? TASK_TAGS.indexOf(task.tag) : TASK_TAGS.length);
+  return sortTasks(tasks)
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) =>
+      Number(a.task.completed) - Number(b.task.completed) || rank(a.task) - rank(b.task) || a.index - b.index)
+    .map(({ task }) => task);
 }
 
 /** Newly completed tasks lead the completed group; reopened tasks lead pending. */
@@ -100,7 +142,11 @@ export function parseStoredTasks(raw: string): ParsedTasks {
       reservedIds.add(id);
     }
     seenIds.add(id);
-    return { id, text: task.text, completed: task.completed };
+    const repaired: TodoItem = { id, text: task.text, completed: task.completed };
+    if (isTaskTag(task.tag)) repaired.tag = task.tag;
+    // An unknown tag is dropped, but the original record is still backed up.
+    else if (task.tag !== undefined) hasInvalidData = true;
+    return repaired;
   });
   return { tasks: sortTasks(tasks), hasInvalidData };
 }

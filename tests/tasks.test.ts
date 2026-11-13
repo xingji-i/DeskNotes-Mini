@@ -4,6 +4,10 @@ import {
   createDefaultTasks,
   createTaskId,
   loadStoredTasks,
+  moveTask,
+  moveTaskBy,
+  nextTag,
+  sortTasksByTag,
   parseStoredTasks,
   sortTasks,
   STORAGE_KEY,
@@ -151,4 +155,35 @@ test("failed or unverifiable backup blocks persistence and retains the source", 
     assert.equal(storage.values.get(STORAGE_KEY), "{");
     assert.ok(!storage.writes.includes(STORAGE_KEY));
   }
+});
+
+test("manual reordering stays inside the pending or completed group", () => {
+  const input = [task(1), task(2), task(3), task(4, true), task(5, true)];
+  assert.deepEqual(moveTask(input, 1, 3).map((item) => item.id), [2, 3, 1, 4, 5]);
+  assert.deepEqual(moveTask(input, 3, 1).map((item) => item.id), [3, 1, 2, 4, 5]);
+  assert.deepEqual(moveTask(input, 1, 4).map((item) => item.id), [1, 2, 3, 4, 5]);
+  assert.deepEqual(moveTask(input, 1, 999).map((item) => item.id), [1, 2, 3, 4, 5]);
+  assert.deepEqual(moveTaskBy(input, 2, -1).map((item) => item.id), [2, 1, 3, 4, 5]);
+  assert.deepEqual(moveTaskBy(input, 1, -1).map((item) => item.id), [1, 2, 3, 4, 5]);
+  assert.deepEqual(moveTaskBy(input, 3, 1).map((item) => item.id), [1, 2, 3, 4, 5]);
+  assert.deepEqual(moveTaskBy(input, 5, -1).map((item) => item.id), [1, 2, 3, 5, 4]);
+  assert.deepEqual(input.map((item) => item.id), [1, 2, 3, 4, 5]);
+});
+
+test("tags cycle red, orange, blue, none and sort in that priority", () => {
+  assert.deepEqual([undefined, "red", "orange", "blue"].map((tag) => nextTag(tag as never)),
+    ["red", "orange", "blue", undefined]);
+  const input: TodoItem[] = [
+    task(1), { ...task(2), tag: "blue" }, { ...task(3), tag: "red" }, { ...task(4), tag: "orange" },
+    { ...task(5), tag: "red" }, task(6, true), { ...task(7, true), tag: "red" },
+  ];
+  assert.deepEqual(sortTasksByTag(input).map((item) => item.id), [3, 5, 4, 2, 1, 7, 6]);
+  assert.deepEqual(input.map((item) => item.id), [1, 2, 3, 4, 5, 6, 7]);
+});
+
+test("stored tags survive a reload and unknown tags are dropped with a backup", () => {
+  const tagged = [{ ...task(1), tag: "orange" }, task(2)];
+  assert.deepEqual(parseStoredTasks(JSON.stringify(tagged)), { tasks: tagged, hasInvalidData: false });
+  assert.deepEqual(parseStoredTasks(JSON.stringify([{ ...task(1), tag: "green" }])),
+    { tasks: [task(1)], hasInvalidData: true });
 });
